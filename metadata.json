@@ -1,0 +1,6 @@
+{
+  "name": "Restaurant Yikéli",
+  "description": "Application web de gestion du Restaurant Yikéli : commandes en ligne, point de vente (POS) pour employés, suivi financier et dashboard d'administration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

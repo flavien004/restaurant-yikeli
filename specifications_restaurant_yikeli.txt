@@ -1,0 +1,262 @@
+================================================================================
+          DOCUMENT DE SPÉCIFICATIONS TECHNIQUES & FONCTIONNELLES COMPLET
+                     APPLICATION RESTAURANT YIKÉLI & POS
+================================================================================
+
+Ce document contient l'intégralité des fonctionnalités, de l'architecture
+technique, du modèle de données, des interfaces utilisateurs et de la charte
+graphique de l'application Restaurant Yikéli pour permettre de reproduire
+exactement l'expérience à partir de n'importe quel système de génération ou IA.
+
+--------------------------------------------------------------------------------
+1. CONCEPT GLOBAL DE L'APPLICATION
+--------------------------------------------------------------------------------
+Restaurant Yikéli est une solution hybride combinant :
+- Une vitrine de commande en ligne pour les clients (interface d'auto-commande).
+- Un Point de vente (POS) tactile moderne pour les caissiers et serveurs en salle.
+- Un panneau d'Administration et de Comptabilité avancé pour le propriétaire.
+
+L'application est optimisée pour l'écosystème commercial ouest-africain (Abidjan,
+Côte d'Ivoire), utilisant la devise FCFA et supportant des modes de paiements
+locaux (Espèces, Wave, Orange Money, Djamo/Carte) avec gestion de la monnaie.
+
+--------------------------------------------------------------------------------
+2. ARCHITECTURE TECHNIQUE ET BIBLIOTHÈQUES
+--------------------------------------------------------------------------------
+L'application est écrite en React (Vite) + TypeScript + Tailwind CSS, organisée 
+autour d'un état de stockage local (Local State Engine) persistant les données
+dans le localStorage du navigateur pour simuler de manière 100% robuste et 
+fonctionnelle une base de données en temps réel sans serveur tiers nécessaire.
+
+Bibliothèques de l'interface :
+- Tailwind CSS : Pour tout le rendu visuel et la mise en page responsive.
+- lucide-react : Pour l'ensemble de la bibliothèque d'icônes standardisées.
+- motion/react : Pour les animations fluides, transitions de panneaux et de paniers.
+
+--------------------------------------------------------------------------------
+3. MODÈLE DE DONNÉES ET SCHÉMAS DE BASE DE DONNÉES (src/types.ts)
+--------------------------------------------------------------------------------
+Voici les structures TypeScript strictes qui gouvernent l'application :
+
+* Plat :
+  {
+    id: string;
+    name: string;
+    price: number;
+    category: 'PLATS_IVOIRIENS' | 'BOISSONS';
+    isActive: boolean;
+    isStocked?: boolean;        // Si activé, le stock est vérifié
+    stock?: number;             // Quantité disponible
+    lowStockAlert?: number;     // Seuil d'alerte de stock bas
+    expirationDelay?: string;   // Délai avant péremption / Mode de conservation (ex: "3 jours", "Non périssable")
+  }
+
+* User (Utilisateurs du POS) :
+  {
+    id: string;
+    name: string;
+    role: 'ADMIN' | 'CHEF' | 'CAISSIER';
+    isActive: boolean;
+  }
+
+* Client :
+  {
+    id: string;
+    name: string;
+    phone?: string;
+    address?: string;
+  }
+
+* Commande :
+  {
+    id: string;
+    clientId: string;
+    items: CommandeItem[];
+    total: number;
+    type: 'SUR_PLACE' | 'EN_LIGNE';
+    status: 'EN_COURS' | 'ACCEPTEE' | 'SERVIE' | 'ANNULEE';
+    createdAt: string;          // ISO String (YYYY-MM-DDTHH:mm:ss.sssZ)
+    cancelReason?: string;      // Renseigné si ANNULEE
+    comment?: string;           // Message du client à la commande
+  }
+
+* CommandeItem :
+  {
+    id: string;
+    platId: string;
+    platName: string;
+    quantity: number;
+    unitPrice: number;
+  }
+
+* Paiement :
+  {
+    id: string;
+    commandeId: string;
+    userId: string;             // ID du caissier ayant encaissé
+    amount: number;             // Montant récolté pour ce règlement
+    method: 'ESPECE' | 'WAVE' | 'ORANGE_MONEY' | 'DJAMO';
+    createdAt: string;
+  }
+
+* Depense :
+  {
+    id: string;
+    category: string;           // Catégorie de charges (ex: "Logistique", "Ingrédients", "Énergie")
+    description: string;
+    amount: number;
+    date: string;               // YYYY-MM-DD
+  }
+
+* ExpCategory :
+  {
+    id: string;
+    name: string;
+  }
+
+--------------------------------------------------------------------------------
+4. DESCRIPTION DÉTAILLÉE DES INTERFACES (LES 3 ESPACES)
+--------------------------------------------------------------------------------
+
+A. L'INTERFACE CLIENT (auto-commande & vitrine digitale)
+- Barre d'en-tête dynamique colorée avec recherche instantanée de plats.
+- Filtrage par catégorie à l'aide de grandes pastilles visuelles (Cuisine Ivoirienne, Boissons Fraîches).
+- Grille de plats ergonomique avec affichage du stock en temps réel. Lorsque le stock est faible, affichage d'une alerte animée. Si le stock est vide (0), le bouton d'ajout au panier est automatiquement grisé et désactivé ("Rupture").
+- Tiroir de Panier (Cart Drawer) animé glissant depuis la droite de l'écran avec récapitulatif clair des prix, calcul automatique de la TVA locale ou des frais, et formulaire de commande (Nom, téléphone, et type ou table).
+- Gestion du mode de paiement : Renseignement du moyen de paiement souhaité par le client (avec calcul interactif du rendu de la monnaie si Espèces).
+- Envoi dynamique de la commande par WhatsApp : Un bouton permet de formatter automatiquement la commande sous forme de texte agréable et structuré pour l'expédier directement à la cuisine ou au gérant par WhatsApp en un clic.
+- Suivi de commande en temps réel : Notification immédiate au client dès que son statut change sur le tableau du POS.
+
+B. LE POINT DE VENTE TACTILE POUR LES EMPLOYÉS (POS Staff)
+- Simulation d'arrivée de commandes en temps réel issues du module en ligne, matérialisée par un signal visuel "Alerte de Commande En Ligne" clignotante avec un signal sonore de rappel.
+- Service de Prise d'ordres tactile performant : Permet à l'employé de sélectionner les plats pour des clients "Sur place" ou "En livraison", d'enregistrer la commande et de passer au tiroir d'encaissement.
+- Gestion Multi-règlements (Split Payments) : Possibilité de solder une commande en plusieurs versements successifs (par exemple une partie en espèces et une partie par transfert Wave). Les paiements partiels se déduisent en temps réel du "Reste à payer" et sont associés à l'ID du caissier de poste.
+- Impression des tickets thermiques : Un bouton robuste configure le document pour une mise en page d'impression ticket de rouleau standard de 72 mm de largeur de caisse enregistreuse. Un filtre intelligent désactive l'impression d'arrière-plan du navigateur pour ne garder que le ticket.
+- Envoi de facture dématérialisée WhatsApp : Permet d'envoyer le ticket au client via son numéro d'un simple toucher de bouton.
+
+C. LE PORTAIL DE SUPERVISION CONTROLES & COMPTABILITÉ (Administration)
+Le back-office administrateur est un écosystème hautement complet divisé en 5 onglets majeurs :
+
+1. Tableau de Bord Analytique (Dashboard) :
+   - Cartes de statistiques clés : Chiffre d'Affaires filtré par période (Aujourd'hui, Cette Semaine, Ce Mois), Total Dépenses, Résultat Net d'exploitation (Excédent/Déficit), et Volume d'encaissements cumulés.
+   - Alertes de rupture de stock consolidées à faible niveau d'alerte, incitant le gérant à réapprovisionner.
+   - Graphiques de performances : Tableau visuel d'analyse financière.
+
+2. Gestion de la Carte & Menu (Menu Manager + Péremption) :
+   - Tableau dynamique comprenant le prix de vente, la catégorie, le stock en portions disponibles, et la nouveauté : le Délai avant péremption / Mode de conservation (ex: "3 jours à +4°C").
+   - Modal d'Ajout/Édition de plat permettant d'activer/désactiver le produit, configurer si son stock doit être surveillé, déclarer le stock courant, le seuil d'alerte et de documenter ce délai de conservation.
+
+3. Module Comptabilité avancée (Grand Livre & Excel) :
+   - Période comptable ajustable avec sélecteurs de dates intuitifs.
+   - Export XML/CSV d'un simple clic pour modéliser dans Excel le grand livre de caisse.
+   - Impression PDF des comptes conformes en un clic : Grand livre des ventes, Grand livre des charges, et Rapport de Clôture Générale incluant le bilan de stock physique et la répartition exacte des flux (espèces vs digitaux).
+
+4. Audit et Clôture de Caisse par Collaborateur (Till Journal) :
+   - Menu déroulant permettant à l'administrateur de sélectionner individuellement le caissier de jour.
+   - Rendu détaillé de la balance de caisse de l'employé pour le jour sélectionné (synthèse des espèces récupérées, total Wave, total Orange Money, total Djamo) et liste exhaustive des transactions encaissées sous sa signature avec bouton d'impression dédié de son rapport de shift.
+
+5. Historique de Sécurité des Révocations (Annulations & Restorations) :
+   - Visualisation exhaustive de chaque commande annulée avec la date, le montant total restitué et le motif explicite de la révocation spécifié par le gérant ou requis par le système.
+   - Confirmation automatique de la réintroduction instantanée des portions dans la réserve de stock dès l'acte d'annulation.
+
+--------------------------------------------------------------------------------
+5. MÉTHODE CRITIQUES POUR LES FEUILLE DE STYLE CIBLES (src/index.css)
+--------------------------------------------------------------------------------
+Une mécanique poussée commande l'impression du bon composant à l'exclusion de
+tous les autres en manipulant dynamiquement des classes attribuées au body :
+
+```css
+@media print {
+  /* On cache tout l'écran applicatif */
+  #root, body * {
+    visibility: hidden;
+  }
+  /* On affecte une taille de feuille par défaut */
+  @page {
+    size: auto;
+    margin: 0 !important;
+  }
+
+  /* Rendu conditionnel selon la classe appliquée au body de la page */
+  body.print-ticket-only .printable-ticket-element,
+  body.print-ticket-only .printable-ticket-element * {
+    visibility: visible !important;
+  }
+  body.print-ledger-only .printable-ledger-element,
+  body.print-ledger-only .printable-ledger-element * {
+    visibility: visible !important;
+  }
+  body.print-sales-only .printable-sales-element,
+  body.print-sales-only .printable-sales-element * {
+    visibility: visible !important;
+  }
+  body.print-expenses-only .printable-expenses-element,
+  body.print-expenses-only .printable-expenses-element * {
+    visibility: visible !important;
+  }
+  body.print-cashier-journal-only .printable-cashier-journal-element,
+  body.print-cashier-journal-only .printable-cashier-journal-element * {
+    visibility: visible !important;
+  }
+  body.print-report-only .printable-report-element,
+  body.print-report-only .printable-report-element * {
+    visibility: visible !important;
+  }
+
+  /* Styles de positionnement absolu pour écraser les layouts standards */
+  .printable-sales-element,
+  .printable-expenses-element,
+  .printable-cashier-journal-element,
+  .printable-report-element {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    background: white !important;
+    color: black !important;
+    z-index: 999999 !important;
+  }
+}
+```
+
+--------------------------------------------------------------------------------
+6. DIRECTIVE SPÉCIFIQUE D'IMPRESSION SUR LES NAVIGATEURS (Aperçus iFrame)
+--------------------------------------------------------------------------------
+En mode Aperçu intégré (iFrame de l'outil de création comme AI Studio), les 
+navigateurs modernes bloquent le déclenchement de `window.print()` pour des 
+raisons de bac à sable (security sandbox constraints). 
+
+L'application intègre donc un double système d'alarme et de contournement :
+1. Détection de cadre d'intégration avec `window.self !== window.top`.
+2. Bannière de notification élégante et intuitive en haut des interfaces Admin 
+   et POS invitant l'utilisateur à ouvrir le lien dans un nouvel onglet autonome.
+3. Bouton hyper-pratique "Ouvrir dans un nouvel onglet ↗" déclenchant 
+   `window.open(window.location.href, '_blank')`.
+4. Message d'assistance contextualisé face aux boutons d'impression physique.
+
+--------------------------------------------------------------------------------
+7. REPLICABILITE TOTALE PAR SIMPLE PROMPT : LE MODE OPÉRATOIRE
+--------------------------------------------------------------------------------
+Pour reconstituer exactement cette application sur un espace vierge, soumettez le 
+gabarit de consigne suivant :
+
+"Crée une application web de gestion complète pour le Restaurant Yikéli en React + 
+TypeScript et Tailwind CSS. L'interface doit comporter trois espaces distincts 
+et commutables instantanément : 
+1) Une interface d'auto-commande pour les clients avec panier, choix de table, 
+moyens de règlements ivoiriens (Espèces, Wave, Orange Money, Djamo) avec calcul de 
+monnaie et bouton d'envoi de récapitulatif structuré par WhatsApp.
+2) Un Point de vente (POS) pour serveurs et caissiers gérant la caisse, les 
+commandes en salle, les paiements multiples fractionnés par facture, l'envoi de reçus 
+par WhatsApp et l'impression de tickets thermiques avec mise en page CSS propre (72mm).
+3) Un espace d'administration comprenant un tableau de bord analytique multi-période, 
+un panneau de contrôle de la carte (produits, prix, stocks régulés, seuils d'alerte bas 
+et délais de conservation/péremption des aliments), un grand livre comptable filtrable 
+par dates et modes avec exports CSV et PDF imprimables pour les ventes (Grand livre des 
+ventes) et les dépenses de charges, un carnet d'audit pour extraire le journal de caisse 
+signé d'un caissier spécifique pour la clôture de poste du jour, et un registre de 
+sécurité listant les commandes révoquées avec motifs et restauration de stocks.
+Ajoute un système d'alerte dynamique détectant si l'application est exécutée au sein 
+d'une iframe (window.self !== window.top) pour afficher une bannière conseillant d'ouvrir 
+l'application dans un nouvel onglet autonome avec un bouton d'ouverture automatique."
+================================================================================

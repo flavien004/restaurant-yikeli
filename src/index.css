@@ -1,0 +1,306 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #f97316;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ea580c;
+}
+
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Hide non-printable widgets and interactives */
+  .print-hidden,
+  .print\:hidden,
+  button,
+  select,
+  input,
+  textarea,
+  form,
+  footer,
+  nav {
+    display: none !important;
+  }
+
+  /* Collapse the main app tree layout to prevent blank trailing pages */
+  #root,
+  #application-root {
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Force print target anchors and ALL descendants to render with visible content based on body class */
+  body.print-ticket-only .printable-ticket-element,
+  body.print-ticket-only .printable-ticket-element * {
+    visibility: visible !important;
+  }
+
+  body.print-ledger-only .printable-ledger-element,
+  body.print-ledger-only .printable-ledger-element * {
+    visibility: visible !important;
+  }
+
+  body.print-sales-only .printable-sales-element,
+  body.print-sales-only .printable-sales-element * {
+    visibility: visible !important;
+  }
+
+  body.print-expenses-only .printable-expenses-element,
+  body.print-expenses-only .printable-expenses-element * {
+    visibility: visible !important;
+  }
+
+  body.print-cashier-journal-only .printable-cashier-journal-element,
+  body.print-cashier-journal-only .printable-cashier-journal-element * {
+    visibility: visible !important;
+  }
+
+  body.print-report-only .printable-report-element,
+  body.print-report-only .printable-report-element * {
+    visibility: visible !important;
+  }
+
+  body.print-dashboard-only .printable-dashboard-element,
+  body.print-dashboard-only .printable-dashboard-element * {
+    visibility: visible !important;
+  }
+
+  /* Style individual separate reports */
+  .printable-sales-element,
+  .printable-expenses-element,
+  .printable-cashier-journal-element {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    z-index: 999999 !important;
+  }
+
+  /* Projet the thermal ticket overlay as an absolute top-left aligned roll */
+  .printable-ticket-element {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 76mm !important;
+    max-width: 76mm !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 5px !important;
+    margin: 0 !important;
+    z-index: 999999 !important;
+  }
+
+  /* Project the grand ledger report as a dual-column layout */
+  .printable-ledger-element {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 16px !important;
+    z-index: 999999 !important;
+  }
+
+  /* Full-width corporate/A4 business report layout */
+  .printable-report-element {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    z-index: 999999 !important;
+  }
+
+  /* Full-width corporate/A4 business dashboard template layout */
+  .printable-dashboard-element {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    z-index: 999999 !important;
+  }
+
+  .print-avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  @page {
+    margin: 10mm;
+    size: auto;
+  }
+}
+
+/* POS Employee Dark Theme CSS overrides */
+.yikeli-dark-mode {
+  background-color: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-radius: 24px;
+  padding: 24px;
+  border: 1px solid #21262d;
+}
+
+.yikeli-dark-mode h2,
+.yikeli-dark-mode h3,
+.yikeli-dark-mode h4,
+.yikeli-dark-mode h5 {
+  color: #ffffff !important;
+}
+
+.yikeli-dark-mode p,
+.yikeli-dark-mode span:not(.font-mono) {
+  color: #8b949e;
+}
+
+.yikeli-dark-mode .text-gray-850,
+.yikeli-dark-mode .text-gray-800,
+.yikeli-dark-mode .text-gray-700,
+.yikeli-dark-mode .text-slate-800,
+.yikeli-dark-mode .text-slate-700 {
+  color: #e6edf3 !important;
+}
+
+.yikeli-dark-mode .text-gray-500,
+.yikeli-dark-mode .text-gray-450,
+.yikeli-dark-mode .text-gray-400,
+.yikeli-dark-mode .text-slate-500,
+.yikeli-dark-mode .text-slate-400 {
+  color: #8b949e !important;
+}
+
+.yikeli-dark-mode .bg-white,
+.yikeli-dark-mode [class*="bg-white"] {
+  background-color: #161b22 !important;
+  color: #e6edf3 !important;
+  border-color: #30363d !important;
+}
+
+.yikeli-dark-mode .border-gray-150,
+.yikeli-dark-mode .border-gray-200,
+.yikeli-dark-mode .border-slate-100,
+.yikeli-dark-mode .border-slate-200,
+.yikeli-dark-mode .border-orange-100 {
+  border-color: #30363d !important;
+}
+
+.yikeli-dark-mode .bg-slate-50,
+.yikeli-dark-mode .bg-slate-50\/80,
+.yikeli-dark-mode .bg-gray-50\/50,
+.yikeli-dark-mode .bg-orange-50\/40 {
+  background-color: #21262d !important;
+  color: #e6edf3 !important;
+  border-color: #30363d !important;
+}
+
+.yikeli-dark-mode input,
+.yikeli-dark-mode select,
+.yikeli-dark-mode textarea {
+  background-color: #0d1117 !important;
+  color: #e6edf3 !important;
+  border-color: #30363d !important;
+}
+
+.yikeli-dark-mode input::placeholder {
+  color: #484f58 !important;
+}
+
+.yikeli-dark-mode .bg-orange-50 {
+  background-color: rgba(251, 146, 60, 0.15) !important;
+  border-color: rgba(249, 115, 22, 0.3) !important;
+  color: #ff9d66 !important;
+}
+
+.yikeli-dark-mode .text-orange-850 {
+  color: #ff9d66 !important;
+}
+
+.yikeli-dark-mode .text-orange-950 {
+  color: #ffb38a !important;
+}
+
+.yikeli-dark-mode .bg-green-50,
+.yikeli-dark-mode .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+  color: #7ef3c4 !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+.yikeli-dark-mode .text-green-600,
+.yikeli-dark-mode .text-green-700,
+.yikeli-dark-mode .text-emerald-800 {
+  color: #7ef3c4 !important;
+}
+
+.yikeli-dark-mode .hover\:bg-gray-100:hover,
+.yikeli-dark-mode .hover\:bg-orange-50\/50:hover {
+  background-color: #30363d !important;
+}
+
+.yikeli-dark-mode th,
+.yikeli-dark-mode td {
+  border-color: #30363d !important;
+}
