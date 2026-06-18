@@ -86,15 +86,42 @@
     visibility: visible !important;
   }
 
+  body.print-operations-journal-only .printable-operations-journal-element,
+  body.print-operations-journal-only .printable-operations-journal-element * {
+    visibility: visible !important;
+  }
+
   body.print-dashboard-only .printable-dashboard-element,
   body.print-dashboard-only .printable-dashboard-element * {
     visibility: visible !important;
   }
 
+  body.printing-qr-batch #printable-batch-grid,
+  body.printing-qr-batch #printable-batch-grid * {
+    visibility: visible !important;
+  }
+
+  body.printing-qr-batch #printable-batch-grid {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 105% !important;
+    height: auto !important;
+    background: white !important;
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 16px !important;
+    padding: 5mm !important;
+    margin: 0 !important;
+    z-index: 999999 !important;
+  }
+
   /* Style individual separate reports */
   .printable-sales-element,
   .printable-expenses-element,
-  .printable-cashier-journal-element {
+  .printable-cashier-journal-element,
+  .printable-operations-journal-element {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;

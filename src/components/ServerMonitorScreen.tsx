@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Commande, Paiement } from '../types';
-import { Tv, CheckCircle2, Clock, UtensilsCrossed, AlertCircle, RefreshCw } from 'lucide-react';
+import { Tv, CheckCircle2, Clock, UtensilsCrossed, AlertCircle, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 
 interface ServerMonitorScreenProps {
   db: {
@@ -11,6 +11,95 @@ interface ServerMonitorScreenProps {
 }
 
 export default function ServerMonitorScreen({ db }: ServerMonitorScreenProps) {
+  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
+  const [knownOrderStates, setKnownOrderStates] = useState<{ [id: string]: { status: string; type: string } }>({});
+  
+  const isSoundEnabledRef = useRef(isSoundEnabled);
+
+  useEffect(() => {
+    isSoundEnabledRef.current = isSoundEnabled;
+  }, [isSoundEnabled]);
+
+  // High-fidelity light synthesizer using the Web Audio API (cross-browser compatible offline chime)
+  const playNotificationSound = (toneType: 'new' | 'ready' = 'new') => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      
+      const playTone = (time: number, freq: number, duration: number, oscType: 'sine' | 'triangle' = 'sine') => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = oscType;
+        osc.frequency.setValueAtTime(freq, time);
+        gain.gain.setValueAtTime(0.08, time); // lightweight volume level
+        gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(time);
+        osc.stop(time + duration);
+      };
+
+      const now = ctx.currentTime;
+      if (toneType === 'new') {
+        // Light double chime for new online orders (E5 to A5)
+        playTone(now, 659.25, 0.35); // E5
+        playTone(now + 0.12, 880.00, 0.45); // A5
+      } else {
+        // Bright split chime for "Prêt à servir" ready orders (A5 key chime)
+        playTone(now, 880.00, 0.12, 'sine');
+        playTone(now + 0.10, 1046.50, 0.3, 'sine'); // C6
+      }
+    } catch (e) {
+      console.warn("L'auto-play audio a été bloqué par le navigateur ou n'est pas supporté :", e);
+    }
+  };
+
+  // Monitor real-time status transitions for new online orders and status changes
+  useEffect(() => {
+    const newStates: { [id: string]: { status: string; type: string } } = {};
+    db.commandes.forEach((c) => {
+      newStates[c.id] = { status: c.status, type: c.type };
+    });
+
+    const isInitialized = Object.keys(knownOrderStates).length > 0;
+
+    if (!isInitialized) {
+      setKnownOrderStates(newStates);
+      return;
+    }
+
+    let shouldSoundNewOnline = false;
+    let shouldSoundReady = false;
+
+    db.commandes.forEach((c) => {
+      const prev = knownOrderStates[c.id];
+      if (prev === undefined) {
+        // A brand new order just came in
+        if (c.type === 'EN_LIGNE') {
+          shouldSoundNewOnline = true;
+        } else if (c.status === 'PRET_A_LIVRER' || c.status === 'SERVIE') {
+          shouldSoundReady = true;
+        }
+      } else {
+        // Existing order changed status to ready/to serve
+        if (prev.status !== c.status && (c.status === 'PRET_A_LIVRER' || c.status === 'SERVIE')) {
+          shouldSoundReady = true;
+        }
+      }
+    });
+
+    if (isSoundEnabledRef.current) {
+      if (shouldSoundNewOnline) {
+        playNotificationSound('new');
+      } else if (shouldSoundReady) {
+        playNotificationSound('ready');
+      }
+    }
+
+    setKnownOrderStates(newStates);
+  }, [db.commandes]);
+
   // Helper to calculate total payments made for a given order id
   const getAmountPaidForOrder = (orderId: string) => {
     return (db.paiements || [])
@@ -56,11 +145,37 @@ export default function ServerMonitorScreen({ db }: ServerMonitorScreenProps) {
           </div>
         </div>
         
-        <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-2xl flex items-center gap-2.5">
-          <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-ping"></span>
-          <span className="text-xs font-black font-mono tracking-wider">
-            {servedOrders.length} COMMANDES À DESSERVIR
-          </span>
+        <div className="flex flex-wrap items-center gap-3 md:shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              const nextVal = !isSoundEnabled;
+              setIsSoundEnabled(nextVal);
+              if (nextVal) {
+                // Play a brief activation feed sound test
+                setTimeout(() => playNotificationSound('ready'), 60);
+              }
+            }}
+            className={`px-3.5 py-2 rounded-2xl border text-xs font-bold transition-all flex items-center gap-2 cursor-pointer active:scale-95 ${
+              isSoundEnabled
+                ? 'bg-orange-500/10 border-orange-500/20 text-orange-400 hover:bg-orange-500/20'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800'
+            }`}
+          >
+            {isSoundEnabled ? (
+              <Volume2 className="w-4 h-4 text-orange-400 shrink-0" />
+            ) : (
+              <VolumeX className="w-4 h-4 text-slate-500 shrink-0" />
+            )}
+            <span>Sons : {isSoundEnabled ? 'Activés 🔊' : 'Muets 🔇'}</span>
+          </button>
+
+          <div className="bg-slate-900 border border-slate-800 px-4 py-2.5 rounded-2xl flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-ping"></span>
+            <span className="text-xs font-black font-mono tracking-wider">
+              {servedOrders.length} COMMANDES À DESSERVIR
+            </span>
+          </div>
         </div>
       </div>
 

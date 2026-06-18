@@ -1,6 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Plat, User, Client, Commande, Paiement, Depense, CommandeItem, PaymentMethod, CommandeStatus, DepenseCategory, PlatCategory, StockEntry, Supplier } from './types';
 import {
+  CommandeValidationSchema,
+  FeedbackValidationSchema,
+  PlatValidationSchema,
+  EmployeeValidationSchema,
+  SupplierValidationSchema,
+  DepenseValidationSchema,
+  StockEntryValidationSchema
+} from './validation';
+import {
   INITIAL_PLATS,
   INITIAL_USERS,
   INITIAL_CLIENTS,
@@ -22,6 +31,40 @@ const generateUUID = () => {
   });
 };
 
+// --- SYSTEM CACHE INDEXEDDB RESILIENCE RESEAU ---
+function openIndexedDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      reject(new Error('IndexedDB is not supported on this platform.'));
+      return;
+    }
+    const request = indexedDB.open('yikeli_offline_db', 1);
+    request.onupgradeneeded = (event: any) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('app_state')) {
+        db.createObjectStore('app_state', { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = (event: any) => {
+      resolve(event.target.result);
+    };
+    request.onerror = (event: any) => {
+      reject(event.target.error);
+    };
+  });
+}
+
+async function saveToIndexedDB(key: string, data: any): Promise<void> {
+  try {
+    const db = await openIndexedDB();
+    const transaction = db.transaction('app_state', 'readwrite');
+    const store = transaction.objectStore('app_state');
+    store.put({ key, data, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.warn('Erreur d\'écriture IndexedDB:', err);
+  }
+}
+
 export function useYikeliDb() {
   const [plats, setPlats] = useState<Plat[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -36,7 +79,66 @@ export function useYikeliDb() {
   const [stockEntries, setStockEntries] = useState<StockEntry[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
+  // Statut Connexion Réseau Local / Internet
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' ? !navigator.onLine : false);
+
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Synchronisation en tâche de fond automatique vers le cache IndexedDB
+  useEffect(() => {
+    saveToIndexedDB('yikeli_plats', plats);
+    saveToIndexedDB('yikeli_users', users);
+    saveToIndexedDB('yikeli_clients', clients);
+    saveToIndexedDB('yikeli_commandes', commandes);
+    saveToIndexedDB('yikeli_paiements', paiements);
+    saveToIndexedDB('yikeli_depenses', depenses);
+    saveToIndexedDB('yikeli_menujour', menuJour);
+    saveToIndexedDB('yikeli_stock_entries', stockEntries);
+  }, [plats, users, clients, commandes, paiements, depenses, menuJour, stockEntries]);
+
+  useEffect(() => {
+    // Force deletion of sales / orders / payments / expenses / clients / stock data once to meet user requirement
+    const hasClearedSales = localStorage.getItem('yikeli_sales_cleared_v1');
+    if (!hasClearedSales) {
+      localStorage.removeItem('yikeli_commandes');
+      localStorage.removeItem('yikeli_paiements');
+      localStorage.removeItem('yikeli_depenses');
+      localStorage.removeItem('yikeli_clients');
+      localStorage.removeItem('yikeli_stock_entries');
+      localStorage.removeItem('yikeli_commandes_backup');
+      localStorage.removeItem('yikeli_paiements_backup');
+      localStorage.removeItem('yikeli_depenses_backup');
+      localStorage.removeItem('yikeli_clients_backup');
+      localStorage.removeItem('yikeli_stock_entries_backup');
+      localStorage.removeItem('yikeli_full_backup_system');
+      localStorage.setItem('yikeli_sales_cleared_v1', 'true');
+      
+      // Force empty indexedDB tables too
+      openIndexedDB().then((idb) => {
+        try {
+          const trans = idb.transaction('app_state', 'readwrite');
+          const store = trans.objectStore('app_state');
+          store.delete('yikeli_commandes');
+          store.delete('yikeli_paiements');
+          store.delete('yikeli_depenses');
+          store.delete('yikeli_clients');
+          store.delete('yikeli_stock_entries');
+        } catch (e) {
+          console.warn(e);
+        }
+      }).catch(() => {});
+    }
+
     // 1. Plats
     const storedPlats = localStorage.getItem('yikeli_plats');
     if (storedPlats) {
@@ -245,12 +347,13 @@ export function useYikeliDb() {
   };
 
   const createSupplier = (name: string, phone: string, email?: string, address?: string) => {
+    const validated = SupplierValidationSchema.parse({ name, phone, email, address });
     const newSup: Supplier = {
       id: 'sup-' + generateUUID(),
-      name,
-      phone,
-      email,
-      address,
+      name: validated.name,
+      phone: validated.phone,
+      email: validated.email ?? undefined,
+      address: validated.address ?? undefined,
       createdAt: new Date().toISOString()
     };
     const updated = [...suppliers, newSup];
@@ -259,8 +362,15 @@ export function useYikeliDb() {
   };
 
   const updateSupplier = (id: string, name: string, phone: string, email?: string, address?: string) => {
+    const validated = SupplierValidationSchema.parse({ name, phone, email, address });
     const updated = suppliers.map((s) =>
-      s.id === id ? { ...s, name, phone, email, address } : s
+      s.id === id ? {
+        ...s,
+        name: validated.name,
+        phone: validated.phone,
+        email: validated.email ?? s.email,
+        address: validated.address ?? s.address
+      } : s
     );
     saveAndSetSuppliers(updated);
   };
@@ -347,25 +457,37 @@ export function useYikeliDb() {
     image?: string,
     buyingCost?: number
   ) => {
-    const finalStock = isStocked ? (stock ?? 0) : undefined;
-    const newPlat: Plat = {
-      id: 'plat-' + generateUUID(),
+    const validated = PlatValidationSchema.parse({
       name,
       price,
       category,
+      isStocked,
+      stock: stock === undefined ? null : stock,
+      lowStockAlert: lowStockAlert === undefined ? null : lowStockAlert,
+      expirationDelay: expirationDelay === undefined ? null : expirationDelay,
+      image: image === undefined ? null : image,
+      buyingCost: buyingCost === undefined ? null : buyingCost,
+    });
+
+    const finalStock = validated.isStocked ? (validated.stock ?? 0) : undefined;
+    const newPlat: Plat = {
+      id: 'plat-' + generateUUID(),
+      name: validated.name,
+      price: validated.price,
+      category: validated.category,
       isActive: true,
-      isStocked: isStocked ?? false,
+      isStocked: validated.isStocked ?? false,
       stock: finalStock,
-      lowStockAlert,
-      expirationDelay,
-      image: image || '',
-      buyingCost: buyingCost ? Number(buyingCost) : undefined
+      lowStockAlert: validated.lowStockAlert ?? undefined,
+      expirationDelay: validated.expirationDelay ?? undefined,
+      image: validated.image ?? '',
+      buyingCost: validated.buyingCost ?? undefined
     };
     const updated = [...plats, newPlat];
     saveAndSetPlats(updated);
 
     // Create automatic stock entry for the initial stock amount so history perfectly balances!
-    if (isStocked && finalStock && finalStock > 0) {
+    if (validated.isStocked && finalStock && finalStock > 0) {
       const autoEntry: StockEntry = {
         id: 'se-' + generateUUID(),
         platId: newPlat.id,
@@ -373,7 +495,7 @@ export function useYikeliDb() {
         quantity: finalStock,
         date: new Date().toISOString(),
         comment: 'Ajustement initial de stock lors de la création',
-        buyingPrice: buyingCost ? Number(buyingCost) : undefined
+        buyingPrice: validated.buyingCost ?? undefined
       };
       saveAndSetStockEntries([autoEntry, ...stockEntries]);
     }
@@ -393,19 +515,31 @@ export function useYikeliDb() {
     image?: string,
     buyingCost?: number
   ) => {
+    const validated = PlatValidationSchema.parse({
+      name,
+      price,
+      category,
+      isStocked,
+      stock: null,
+      lowStockAlert: lowStockAlert === undefined ? null : lowStockAlert,
+      expirationDelay: expirationDelay === undefined ? null : expirationDelay,
+      image: image === undefined ? null : image,
+      buyingCost: buyingCost === undefined ? null : buyingCost,
+    });
+
     const updated = plats.map((p) =>
       p.id === id
         ? {
             ...p,
-            name,
-            price,
-            category,
+            name: validated.name,
+            price: validated.price,
+            category: validated.category,
             isActive,
-            isStocked: isStocked ?? p.isStocked,
-            lowStockAlert: isStocked ? lowStockAlert : undefined,
-            expirationDelay,
-            image: image !== undefined ? image : p.image,
-            buyingCost: buyingCost ? Number(buyingCost) : undefined,
+            isStocked: validated.isStocked ?? p.isStocked,
+            lowStockAlert: validated.isStocked ? (validated.lowStockAlert ?? undefined) : undefined,
+            expirationDelay: validated.expirationDelay ?? undefined,
+            image: validated.image !== null ? validated.image : p.image,
+            buyingCost: validated.buyingCost ?? undefined,
             // stock direct edit is blocked - quantity only changes via stock entries!
           }
         : p
@@ -450,20 +584,32 @@ export function useYikeliDb() {
     password?: string,
     salaireNet?: number
   ) => {
-    const newEmp: User = {
-      id: 'user-' + generateUUID(),
+    const validated = EmployeeValidationSchema.parse({
       name,
       phone,
       email,
+      poste: poste || null,
+      dateEmbauche: dateEmbauche || null,
+      dateFinContrat: dateFinContrat || null,
+      username: username || null,
+      password: password || null,
+      salaireNet: salaireNet || null,
+    });
+
+    const newEmp: User = {
+      id: 'user-' + generateUUID(),
+      name: validated.name,
+      phone: validated.phone,
+      email: validated.email,
       role: 'EMPLOYE',
       isActive: true,
       createdAt: new Date().toISOString(),
-      poste: poste || '',
-      dateEmbauche: dateEmbauche || '',
-      dateFinContrat: dateFinContrat || '',
-      username: username || name.toLowerCase().replace(/\s+/g, ''),
-      password: password || '12345',
-      salaireNet: salaireNet !== undefined ? Number(salaireNet) : 0,
+      poste: validated.poste ?? '',
+      dateEmbauche: validated.dateEmbauche ?? '',
+      dateFinContrat: validated.dateFinContrat ?? '',
+      username: validated.username ?? validated.name.toLowerCase().replace(/\s+/g, ''),
+      password: validated.password ?? '12345',
+      salaireNet: validated.salaireNet ?? 0,
     };
     saveAndSetUsers([...users, newEmp]);
     return newEmp;
@@ -482,20 +628,33 @@ export function useYikeliDb() {
     password?: string,
     salaireNet?: number
   ) => {
+    const validated = EmployeeValidationSchema.parse({
+      name,
+      phone,
+      email,
+      poste: poste !== undefined ? poste : null,
+      dateEmbauche: dateEmbauche !== undefined ? dateEmbauche : null,
+      dateFinContrat: dateFinContrat !== undefined ? dateFinContrat : null,
+      username: username !== undefined ? username : null,
+      password: password !== undefined ? password : null,
+      salaireNet: salaireNet !== undefined ? salaireNet : null,
+      isActive,
+    });
+
     const updated = users.map((u) =>
       u.id === id
         ? {
             ...u,
-            name,
-            phone,
-            email,
-            poste: poste !== undefined ? poste : u.poste,
-            dateEmbauche: dateEmbauche !== undefined ? dateEmbauche : u.dateEmbauche,
-            dateFinContrat: dateFinContrat !== undefined ? dateFinContrat : u.dateFinContrat,
-            isActive: isActive !== undefined ? isActive : u.isActive,
-            username: username !== undefined ? username : u.username,
-            password: password !== undefined ? password : u.password,
-            salaireNet: salaireNet !== undefined ? Number(salaireNet) : u.salaireNet,
+            name: validated.name,
+            phone: validated.phone,
+            email: validated.email,
+            poste: validated.poste ?? u.poste,
+            dateEmbauche: validated.dateEmbauche ?? u.dateEmbauche,
+            dateFinContrat: validated.dateFinContrat ?? u.dateFinContrat,
+            isActive: validated.isActive !== undefined ? validated.isActive : u.isActive,
+            username: validated.username ?? u.username,
+            password: validated.password ?? u.password,
+            salaireNet: validated.salaireNet ?? u.salaireNet,
           }
         : u
     );
@@ -584,9 +743,20 @@ export function useYikeliDb() {
     paymentMethod?: string,
     tableNumber?: number
   ) => {
-    const client = getOrCreateClientByPhone(clientName, clientPhone);
+    const validated = CommandeValidationSchema.parse({
+      clientName,
+      clientPhone,
+      items,
+      type,
+      employeeId: employeeId || null,
+      comment: comment || null,
+      paymentMethod: paymentMethod || null,
+      tableNumber: tableNumber || null,
+    });
 
-    const commandeItems: CommandeItem[] = items.map((it) => {
+    const client = getOrCreateClientByPhone(validated.clientName, validated.clientPhone);
+
+    const commandeItems: CommandeItem[] = validated.items.map((it) => {
       const originalPlat = plats.find((p) => p.id === it.platId);
       return {
         id: `ci-${generateUUID()}`,
@@ -606,20 +776,20 @@ export function useYikeliDb() {
     const newCmd: Commande = {
       id: commandeId,
       clientId: client.id,
-      userId: employeeId,
-      type,
-      tableNumber,
+      userId: validated.employeeId ?? undefined,
+      type: validated.type,
+      tableNumber: validated.tableNumber ?? undefined,
       total,
       status: 'EN_COURS',
       createdAt: new Date().toISOString(),
       items: finalizedItems,
-      comment: comment || '',
-      paymentMethod,
+      comment: validated.comment ?? '',
+      paymentMethod: validated.paymentMethod ?? undefined,
     };
 
     // Deduct stock for stocked items when ordering
     const updatedPlats = plats.map((p) => {
-      const orderItem = items.find((it) => it.platId === p.id);
+      const orderItem = validated.items.find((it) => it.platId === p.id);
       if (orderItem && p.isStocked && p.stock !== undefined) {
         const remainingStock = Math.max(0, p.stock - orderItem.quantity);
         return {
@@ -1139,13 +1309,15 @@ export function useYikeliDb() {
     commandeId: string,
     feedback: { repas: number; delai: number; courtoisie: number; comment?: string }
   ) => {
+    const validated = FeedbackValidationSchema.parse(feedback);
+
     // 1. Save feedback to order
     const updatedCmds = commandes.map((c) => {
       if (c.id === commandeId) {
         return {
           ...c,
           feedback: {
-            ...feedback,
+            ...validated,
             createdAt: new Date().toISOString()
           }
         };
@@ -1160,13 +1332,13 @@ export function useYikeliDb() {
     
     // Cashier is evaluated on: délai de prise en charge et courtoisie
     // Note is between 1 and 5. Average < 5 -> -1 point, Average === 5 -> +2 points
-    const cashierAvg = (feedback.delai + feedback.courtoisie) / 2;
+    const cashierAvg = (validated.delai + validated.courtoisie) / 2;
     const isCashierSatisfied = cashierAvg >= 4.5; // equivalent to both 5s or close
     const cashierPointsDiff = isCashierSatisfied ? 2 : -1;
 
     // Cook is evaluated on: repas
     // Note < 5 -> -1 point, Note === 5 -> +2 points
-    const isCookSatisfied = feedback.repas >= 4.5;
+    const isCookSatisfied = validated.repas >= 4.5;
     const cookPointsDiff = isCookSatisfied ? 2 : -1;
 
     const updatedUsers = users.map((u) => {
@@ -1192,21 +1364,67 @@ export function useYikeliDb() {
   };
 
   // 6. Expenses (Dépenses)
-  const addDepense = (category: DepenseCategory, description: string, amount: number, date: string) => {
-    const newDep: Depense = {
-      id: 'depense-' + generateUUID(),
+  const addDepense = (
+    category: DepenseCategory,
+    description: string,
+    amount: number,
+    date: string,
+    status?: 'PAYEE' | 'EN_ATTENTE' | 'REJETEE',
+    submittedBy?: string
+  ) => {
+    const validated = DepenseValidationSchema.parse({
       category,
       description,
       amount,
       date: date || new Date().toISOString().substring(0, 10),
+      submittedBy: submittedBy || null,
+    });
+
+    const newDep: Depense = {
+      id: 'depense-' + generateUUID(),
+      category: validated.category,
+      description: validated.description,
+      amount: validated.amount,
+      date: validated.date,
+      status: status || 'PAYEE',
+      submittedBy: validated.submittedBy ?? '',
     };
     saveAndSetDepenses([newDep, ...depenses]);
     return newDep;
   };
 
-  const updateDepense = (id: string, category: DepenseCategory, description: string, amount: number, date: string) => {
+  const approveDepense = (id: string) => {
     const updated = depenses.map((d) =>
-      d.id === id ? { ...d, category, description, amount, date } : d
+      d.id === id ? { ...d, status: 'PAYEE' as const } : d
+    );
+    saveAndSetDepenses(updated);
+  };
+
+  const rejectDepense = (id: string) => {
+    const updated = depenses.map((d) =>
+      d.id === id ? { ...d, status: 'REJETEE' as const } : d
+    );
+    saveAndSetDepenses(updated);
+  };
+
+  const updateDepense = (id: string, category: DepenseCategory, description: string, amount: number, date: string) => {
+    const validated = DepenseValidationSchema.parse({
+      category,
+      description,
+      amount,
+      date,
+    });
+
+    const updated = depenses.map((d) =>
+      d.id === id
+        ? {
+            ...d,
+            category: validated.category,
+            description: validated.description,
+            amount: validated.amount,
+            date: validated.date,
+          }
+        : d
     );
     saveAndSetDepenses(updated);
   };
@@ -1225,20 +1443,28 @@ export function useYikeliDb() {
     buyingPrice?: number,
     supplierId?: string
   ) => {
-    const plat = plats.find((p) => p.id === platId);
+    const validated = StockEntryValidationSchema.parse({
+      platId,
+      quantity,
+      comment,
+      buyingPrice,
+      supplierId,
+    });
+
+    const plat = plats.find((p) => p.id === validated.platId);
     if (!plat) return null;
 
-    const supplier = suppliers.find((s) => s.id === supplierId);
+    const supplier = suppliers.find((s) => s.id === (validated.supplierId || undefined));
 
     const newEntry: StockEntry = {
       id: 'se-' + generateUUID(),
-      platId,
+      platId: validated.platId,
       platName: plat.name,
-      quantity,
+      quantity: validated.quantity,
       date: customDate || new Date().toISOString(),
-      comment: comment || 'Entrée en stock manuelle',
-      buyingPrice: buyingPrice !== undefined ? Number(buyingPrice) : undefined,
-      supplierId,
+      comment: validated.comment ?? 'Entrée en stock manuelle',
+      buyingPrice: validated.buyingPrice ?? undefined,
+      supplierId: validated.supplierId ?? undefined,
       supplierName: supplier?.name
     };
 
@@ -1247,11 +1473,11 @@ export function useYikeliDb() {
 
     // Update real-time Plat quantity and buyingCost!
     const updatedPlats = plats.map((p) => {
-      if (p.id === platId) {
+      if (p.id === validated.platId) {
         return {
           ...p,
-          stock: (p.stock || 0) + quantity,
-          buyingCost: buyingPrice !== undefined ? Number(buyingPrice) : p.buyingCost
+          stock: (p.stock || 0) + validated.quantity,
+          buyingCost: validated.buyingPrice !== undefined ? validated.buyingPrice : p.buyingCost
         };
       }
       return p;
@@ -1259,13 +1485,13 @@ export function useYikeliDb() {
     saveAndSetPlats(updatedPlats);
 
     // Update expenses dynamically for stock procurement!
-    if (buyingPrice !== undefined) {
-      const parsedCost = Number(buyingPrice);
-      const totalCost = parsedCost * quantity;
+    if (validated.buyingPrice !== undefined) {
+      const parsedCost = validated.buyingPrice;
+      const totalCost = parsedCost * validated.quantity;
       const autoDepense: Depense = {
         id: 'depense-' + generateUUID() + '-auto-stock',
         category: 'Provisions',
-        description: `Approvisionnement ${plat.name} (Qté: ${quantity} x ${parsedCost} FCFA)${supplier ? ` chez FRS: ${supplier.name}` : ''}`,
+        description: `Approvisionnement ${plat.name} (Qté: ${validated.quantity} x ${parsedCost} FCFA)${supplier ? ` chez FRS: ${supplier.name}` : ''}`,
         amount: totalCost,
         date: (customDate || new Date().toISOString()).split('T')[0]
       };
@@ -1455,6 +1681,8 @@ export function useYikeliDb() {
     registerPaiement,
     submitCommandeFeedback,
     addDepense,
+    approveDepense,
+    rejectDepense,
     updateDepense,
     deleteDepense,
     addPlatCategory,
@@ -1469,5 +1697,6 @@ export function useYikeliDb() {
     lastBackupTime,
     isBackupSuccess,
     forceManualBackup,
+    isOffline,
   };
 }

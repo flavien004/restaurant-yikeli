@@ -8,3 +8,16 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Register PWA Service Worker for offline resilience and installability
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then((registration) => {
+        console.log('⚡ PWA Service Worker enregistré avec succès:', registration.scope);
+      })
+      .catch((error) => {
+        console.warn('⚠️ Enregistrement de Service Worker échoué :', error);
+      });
+  });
+}

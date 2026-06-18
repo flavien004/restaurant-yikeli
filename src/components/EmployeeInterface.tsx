@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useYikeliDb } from '../db';
 import { Plat, User, Client, Commande, Paiement, PaymentMethod, CommandeStatus } from '../types';
 import Logo from './Logo';
+import InteractiveHelpModal from './InteractiveHelpModal';
+import { HelpCircle } from 'lucide-react';
 import {
   ShoppingBag,
   CreditCard,
@@ -53,6 +55,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
 
   // Flow State
   const [activeSubTab, setActiveSubTab] = useState<'pos' | 'historique' | 'caisse-bilan'>('pos');
+  const [showHelpModal, setShowHelpModal] = useState(false);
 
   // Comfort Dark Mode state for night shifts
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -364,18 +367,18 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
   };
 
   // Sound chime notification for incoming online orders (Web Audio API)
-  const playNotificationSound = () => {
+  const playNotificationSound = (toneType: 'new' | 'ready' = 'new') => {
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioContextClass) return;
       const ctx = new AudioContextClass();
       
-      const playTone = (time: number, freq: number, duration: number) => {
+      const playTone = (time: number, freq: number, duration: number, oscType: 'sine' | 'triangle' = 'sine') => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.type = 'sine';
+        osc.type = oscType;
         osc.frequency.setValueAtTime(freq, time);
-        gain.gain.setValueAtTime(0.15, time);
+        gain.gain.setValueAtTime(0.12, time);
         gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -384,8 +387,15 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
       };
 
       const now = ctx.currentTime;
-      playTone(now, 587.33, 0.4); // D5 (Re)
-      playTone(now + 0.15, 880, 0.5); // A5 (La)
+      if (toneType === 'new') {
+        // Joyous double ascending chime for incoming orders
+        playTone(now, 587.33, 0.4); // D5 (Re)
+        playTone(now + 0.15, 880, 0.5); // A5 (La)
+      } else {
+        // Double fast pip-pip chime for ready to serve orders
+        playTone(now, 880, 0.12, 'sine'); // High A5
+        playTone(now + 0.12, 1174.66, 0.35, 'sine'); // High D6
+      }
     } catch (e) {
       console.warn('Audio Context sound play blocked or failed:', e);
     }
@@ -396,31 +406,50 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
     return db.commandes.filter((c) => c.type === 'EN_LIGNE' && c.status === 'EN_COUR' || (c.type === 'EN_LIGNE' && c.status === 'EN_COURS'));
   }, [db.commandes]);
 
-  const [notification, setNotification] = useState<{ id: string; message: string; orderId: string } | null>(null);
-  const [prevPendingCount, setPrevPendingCount] = useState(pendingOnlineOrders.length);
+  const [notification, setNotification] = useState<{ id: string; message: string; orderId: string; type: 'new' | 'ready' } | null>(null);
+  const [knownOrderStates, setKnownOrderStates] = useState<{ [id: string]: string }>({});
 
   React.useEffect(() => {
-    const currentCount = pendingOnlineOrders.length;
-    if (currentCount > prevPendingCount) {
-      // Trigger chime
-      playNotificationSound();
-      
-      // Select the freshest pending online order to draw banner
-      const latestOnlineOrd = [...db.commandes]
-        .filter(c => c.type === 'EN_LIGNE' && c.status === 'EN_COURS')
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    // Diff-tracker for real-time order states
+    const newStates: { [id: string]: string } = {};
+    let isInitialized = Object.keys(knownOrderStates).length > 0;
+    
+    db.commandes.forEach(c => {
+      newStates[c.id] = c.status;
+    });
 
-      if (latestOnlineOrd) {
-        const clientObj = db.clients.find(c => c.id === latestOnlineOrd.clientId);
+    if (!isInitialized) {
+      setKnownOrderStates(newStates);
+      return;
+    }
+
+    db.commandes.forEach(c => {
+      const prevStatus = knownOrderStates[c.id];
+      if (prevStatus === undefined) {
+        // 1. A new order is submitted (either online or taken by waitstaff)
+        playNotificationSound('new');
+        const clientObj = db.clients.find(cl => cl.id === c.clientId);
         setNotification({
-          id: latestOnlineOrd.id,
-          message: `🔔 Nouvelle commande en ligne de ${clientObj?.name || 'Client'} d'un montant de ${formatFCFA(latestOnlineOrd.total)} en attente !`,
-          orderId: latestOnlineOrd.id,
+          id: c.id + '-new',
+          message: `🔔 Nouvelle commande lancée (${c.type === 'EN_LIGNE' ? 'En ligne' : 'Table num.' + (c.tableNumber || '#')}) : ${clientObj?.name || 'Client'} (${formatFCFA(c.total)}) !`,
+          orderId: c.id,
+          type: 'new'
+        });
+      } else if (prevStatus !== c.status && c.status === 'PRET_A_LIVRER') {
+        // 2. An order has transition status to PRET_A_LIVRER
+        playNotificationSound('ready');
+        const clientObj = db.clients.find(cl => cl.id === c.clientId);
+        setNotification({
+          id: c.id + '-ready',
+          message: `🍽️ Plat prêt à servir ! La commande de ${clientObj?.name || 'Client'} (Table ${c.tableNumber || '#'}) est prête, passez en cuisine !`,
+          orderId: c.id,
+          type: 'ready'
         });
       }
-    }
-    setPrevPendingCount(currentCount);
-  }, [pendingOnlineOrders, db.commandes, prevPendingCount]);
+    });
+
+    setKnownOrderStates(newStates);
+  }, [db.commandes]);
 
   return (
     <div className={`space-y-6 transition-colors duration-305 ${isDarkMode ? 'yikeli-dark-mode' : ''}`} id="staff-pos-module">
@@ -457,6 +486,17 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
 
         {/* Logged in Cashier profile and Logout action */}
         <div className="flex items-center gap-3.5 bg-orange-650/80 px-4 py-2 rounded-xl border border-white/20 shadow-inner">
+          <button
+            onClick={() => setShowHelpModal(true)}
+            className="p-1.5 hover:bg-orange-700/50 rounded-lg text-white/90 hover:text-white transition cursor-pointer flex items-center gap-1 shrink-0 text-xs font-bold"
+            title="Aide interactive"
+          >
+            <HelpCircle className="w-4 h-4 text-yellow-300" />
+            <span>Aide</span>
+          </button>
+          
+          <div className="h-5 w-px bg-white/20" />
+
           <button
             onClick={toggleDarkMode}
             className="p-1.5 hover:bg-orange-700/50 rounded-lg text-white/90 hover:text-white transition cursor-pointer flex items-center justify-center shrink-0"
@@ -528,18 +568,22 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
         );
       })()}
 
-      {/* Real-time online order toast notification bar */}
+      {/* Real-time online/on-site order toast notification bar */}
       <AnimatePresence>
         {notification && (
           <motion.div
             initial={{ opacity: 0, y: -15 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
-            className="bg-amber-50 border-2 border-amber-300 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-amber-950 shadow-md font-sans"
+            className={`p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-lg font-sans border-2 ${
+              notification.type === 'ready'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                : 'bg-amber-55 border-amber-300 text-amber-950'
+            }`}
           >
             <div className="flex items-center gap-2.5">
-              <span className="flex h-2.5 w-2.5 rounded-full bg-red-500 animate-ping"></span>
-              <span className="font-semibold">{notification.message}</span>
+              <span className={`flex h-2.5 w-2.5 rounded-full animate-pulse ${notification.type === 'ready' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+              <span className="font-bold">{notification.message}</span>
             </div>
             <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
               <button
@@ -547,13 +591,15 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                   setActiveSubTab('historique'); // Open order queue
                   setNotification(null); // Dismiss notification
                 }}
-                className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-3 py-1.5 rounded-lg mr-2 hover:scale-[1.02] transform transition cursor-pointer"
+                className={`text-white font-extrabold px-3.5 py-2 rounded-xl hover:scale-[1.02] transform transition cursor-pointer text-[11px] uppercase tracking-wider shadow-sm ${
+                  notification.type === 'ready' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-orange-500 hover:bg-orange-600'
+                }`}
               >
-                Traiter maintenant
+                {notification.type === 'ready' ? 'Voir Service 🍽️' : 'Traiter l\'Ordre ⚙️'}
               </button>
               <button
                 onClick={() => setNotification(null)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-full transition cursor-pointer"
+                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-full transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -604,6 +650,18 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
           <Activity className="w-4 h-4" />
           Bilan de Caisse
         </button>
+
+        <button
+          onClick={() => setActiveSubTab('depenses')}
+          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition ${
+            activeSubTab === 'depenses'
+              ? 'border-purple-500 text-purple-600 font-bold'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Coins className="w-4 h-4 text-purple-500" />
+          <span>Saisir Dépense</span>
+        </button>
       </div>
 
       {/* SUB-SECTION 1: ORDER ENTRY SYSTEM (POS TERMINAL) */}
@@ -625,9 +683,9 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
               />
             </div>
 
-            <div className="bg-orange-50 border border-orange-100 p-3.5 rounded-xl text-orange-850 text-xs flex gap-2 items-center">
+            <div className="bg-orange-50 border border-orange-150 p-3.5 rounded-xl text-orange-900 text-xs flex gap-2 items-center shadow-sm">
               <AlertCircle className="w-4 h-4 text-orange-600 shrink-0" />
-              <span>Les plats grisés ne font pas partie du <strong>Menu du Jour</strong> programmé par l'Administrateur aujourd'hui.</span>
+              <span>Seuls les produits programmés au <strong>Menu du Jour</strong> par l'administrateur s'affichent ci-dessous pour optimiser la vue de saisie.</span>
             </div>
 
             {/* Menu Items Categories Blocks */}
@@ -637,7 +695,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Plats traditionnels Ivoiriens</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {db.plats
-                    .filter((p) => p.category === 'PLATS_IVOIRIENS' && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
+                    .filter((p) => p.category === 'PLATS_IVOIRIENS' && db.menuJour.includes(p.id) && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
                     .map((plat) => {
                       const isMenuJour = db.menuJour.includes(plat.id);
                       return (
@@ -690,7 +748,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Boissons fraîches</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {db.plats
-                    .filter((p) => p.category === 'BOISSONS' && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
+                    .filter((p) => p.category === 'BOISSONS' && db.menuJour.includes(p.id) && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
                     .map((plat) => {
                       const isMenuJour = db.menuJour.includes(plat.id);
                       const isOutOfStock = plat.isStocked && (plat.stock ?? 0) <= 0;
@@ -755,7 +813,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <h3 className="text-xs font-bold text-purple-650 uppercase tracking-widest mb-3">Emballages et Conditionnements</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {db.plats
-                    .filter((p) => p.category === 'EMBALLAGES' && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
+                    .filter((p) => p.category === 'EMBALLAGES' && db.menuJour.includes(p.id) && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
                     .map((plat) => {
                       const isMenuJour = db.menuJour.includes(plat.id);
                       const isOutOfStock = plat.isStocked && (plat.stock ?? 0) <= 0;
@@ -1196,25 +1254,25 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                           )}
 
                           {/* Cashier Request Cancellation / Refund of paid order */}
-                          {['PAYEE', 'SERVIE', 'PRET_A_LIVRER', 'EN_LIVRAISON'].includes(cmd.status) && (
+                          {(paid > 0 && cmd.status !== 'DEMANDE_ANNULATION' && cmd.status !== 'ANNULEE') && (
                             <button
                               onClick={() => {
-                                const reason = prompt("Saisir le motif détaillé de la demande d'annulation et remboursement pour cette commande déjà réglée :");
+                                const reason = prompt("Saisir le motif détaillé de la demande de remboursement pour cette commande déjà réglée :");
                                 if (reason === null) return;
                                 if (!reason.trim()) {
-                                  alert("Erreur: Le motif de demande d'annulation est obligatoire !");
+                                  alert("Erreur: Le motif de remboursement de commande est obligatoire !");
                                   return;
                                 }
                                 const res = db.updateCommandeStatus(cmd.id, 'DEMANDE_ANNULATION', false, reason.trim());
                                 if (res.success) {
-                                  alert("Demande d'annulation et de remboursement transmise avec succès à l'administration !");
+                                  alert("Demande de remboursement et d'annulation transmise avec succès à l'administration !");
                                 } else {
                                   alert(res.error);
                                 }
                               }}
-                              className="px-2 py-1 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-800 border border-amber-200 rounded-lg shadow-sm transition flex items-center gap-1 cursor-pointer"
+                              className="px-2 py-1 text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 rounded-lg shadow-sm transition flex items-center gap-1 cursor-pointer"
                             >
-                              🗑️ Annulation / Remb.
+                              💰 Demander Remboursement
                             </button>
                           )}
                         </div>
@@ -1310,6 +1368,178 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
         </motion.div>
       )}
 
+      {/* SUB-SECTION 4: COUPE DE CAISSE / DEPOSE DE DEPENSES */}
+      {activeSubTab === 'depenses' && (
+        <motion.div
+          key="caisse-depenses-tab"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6"
+        >
+          <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm space-y-6">
+            <div className="border-b border-gray-150 pb-4">
+              <h3 className="text-base font-bold text-slate-950 flex items-center gap-2">
+                <Coins className="w-5 h-5 text-purple-600" />
+                <span>Enregistrement d'une Nouvelle Dépense</span>
+              </h3>
+              <p className="text-xs text-gray-500">
+                Saisissez les détails de vos achats de provisions, transport ou fournitures. Toute dépense saisie doit être validée par la direction (Gérant) avant d'être prise en compte dans la comptabilité globale.
+              </p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.currentTarget;
+                const formData = new FormData(form);
+                const category = formData.get('category') as string;
+                const desc = formData.get('description') as string;
+                const amount = Number(formData.get('amount'));
+                const date = formData.get('date') as string;
+
+                if (!desc.trim() || !amount || amount <= 0) {
+                  alert('Veuillez remplir correctement la description et le montant.');
+                  return;
+                }
+
+                // Call addDepense but strictly as EN_ATTENTE
+                db.addDepense(category, desc.trim(), amount, date, 'EN_ATTENTE', activeEmployee?.name || 'Caissier');
+                form.reset();
+                alert('⏳ Dépense enregistrée avec succès ! Elle est désormais en attente de validation par le gérant.');
+              }}
+              className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end text-xs"
+            >
+              <div className="space-y-1.5 col-span-1">
+                <label className="font-extrabold text-slate-700">Catégorie</label>
+                <select
+                  name="category"
+                  className="w-full bg-slate-50 hover:bg-slate-100 text-slate-800 border border-gray-250 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium"
+                >
+                  {Array.from(new Set(db.depenseCategories || ['Loyer', 'Factures', 'Provisions', 'Transport', 'Livraison', 'Taxes', 'Salaires', 'Réparations', 'Autre'])).map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5 col-span-1 md:col-span-2">
+                <label className="font-extrabold text-slate-700">Description / Justification de l'Achat</label>
+                <input
+                  type="text"
+                  name="description"
+                  required
+                  placeholder="Ex: Achat charbon, transport marché d'Abatta..."
+                  className="w-full bg-slate-50 text-slate-800 border border-gray-250 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div className="space-y-1.5 col-span-1 font-sans">
+                <label className="font-extrabold text-slate-700">Montant (FCFA)</label>
+                <input
+                  type="number"
+                  name="amount"
+                  required
+                  min="1"
+                  placeholder="Montant FCFA..."
+                  className="w-full bg-slate-50 text-slate-800 border border-gray-250 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5 col-span-1 md:col-span-1">
+                <label className="font-extrabold text-slate-700">Date d'engagement</label>
+                <input
+                  type="date"
+                  name="date"
+                  required
+                  defaultValue={new Date().toISOString().substring(0, 10)}
+                  className="w-full bg-slate-50 text-slate-800 border border-gray-250 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
+                />
+              </div>
+
+              <div className="col-span-1 md:col-span-3">
+                {/* empty spacer */}
+              </div>
+
+              <div className="col-span-1">
+                <button
+                  type="submit"
+                  className="w-full bg-purple-600 hover:bg-purple-700 text-white font-extrabold py-3 px-4 rounded-xl shadow-sm transition active:scale-[0.98] cursor-pointer text-center text-[11px] uppercase tracking-wider"
+                >
+                  Déposer la demande
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* List of expenses with statuses */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm space-y-4">
+            <div>
+              <h4 className="text-sm font-bold text-slate-900">Historique Récent de Vos Saisies de Caisse</h4>
+              <p className="text-xs text-gray-400">Voici les dépenses soumises à la direction. Les montants ne sont comptabilisés qu'une fois validés par le gérant.</p>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-gray-200">
+              <table className="w-full text-left text-xs min-w-[600px]">
+                <thead className="bg-slate-50 text-slate-500 font-extrabold uppercase border-b border-gray-150">
+                  <tr>
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Catégorie</th>
+                    <th className="p-3">Description</th>
+                    <th className="p-3">Montant</th>
+                    <th className="p-3">Saisie par</th>
+                    <th className="p-3 text-right">Statut de validation</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-150 font-medium">
+                  {db.depenses.filter(d => d.submittedBy || d.status === 'EN_ATTENTE').length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-gray-400 font-normal">
+                        Aucune demande de dépense saisie à afficher.
+                      </td>
+                    </tr>
+                  ) : (
+                    db.depenses.filter(d => d.submittedBy || d.status === 'EN_ATTENTE').map((dep, idx) => {
+                      const finalStatus = dep.status || 'PAYEE';
+                      return (
+                        <tr key={`${dep.id}-${idx}`} className="hover:bg-slate-50/50">
+                          <td className="p-3 font-mono text-gray-500">{dep.date}</td>
+                          <td className="p-3">
+                            <span className="bg-slate-100 text-slate-705 font-bold px-2 py-0.5 rounded-md">
+                              {dep.category}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-800">{dep.description}</td>
+                          <td className="p-3 font-mono font-bold text-slate-900">
+                            {new Intl.NumberFormat('fr-FR').format(dep.amount)} FCFA
+                          </td>
+                          <td className="p-3 text-gray-500">{dep.submittedBy || 'Gérant'}</td>
+                          <td className="p-3 text-right">
+                            {finalStatus === 'EN_ATTENTE' && (
+                              <span className="bg-amber-50 text-amber-700 border border-amber-200 font-extrabold px-2.5 py-1 rounded-xl text-[10px]">
+                                ⏳ En Attente du Gérant
+                              </span>
+                            )}
+                            {finalStatus === 'PAYEE' && (
+                              <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-extrabold px-2.5 py-1 rounded-xl text-[10px]">
+                                ✅ Validée &amp; Payée
+                              </span>
+                            )}
+                            {finalStatus === 'REJETEE' && (
+                              <span className="bg-red-50 text-red-600 border border-red-200 font-extrabold px-2.5 py-1 rounded-xl text-[10px]">
+                                ❌ Rejetée
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* POPUP MODAL 1: MULTI-PAYMENT TERMINAL ENGINE */}
       <AnimatePresence>
         {selectedOrderForPayment && (
@@ -1393,6 +1623,32 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 >
                   Enregistrer l'Encaissement
                 </button>
+
+                {getAmountPaidForOrder(selectedOrderForPayment.id) > 0 && (
+                  <div className="pt-2 border-t border-gray-150 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const reason = prompt("Saisir le motif détaillé de la demande de remboursement pour cette commande déjà réglée :");
+                        if (reason === null) return;
+                        if (!reason.trim()) {
+                          alert("Erreur: Le motif de remboursement de commande est obligatoire !");
+                          return;
+                        }
+                        const res = db.updateCommandeStatus(selectedOrderForPayment.id, 'DEMANDE_ANNULATION', false, reason.trim());
+                        if (res.success) {
+                          alert("Demande de remboursement et d'annulation transmise avec succès à l'administration !");
+                          setSelectedOrderForPayment(null);
+                        } else {
+                          alert(res.error);
+                        }
+                      }}
+                      className="w-full bg-rose-50 hover:bg-rose-100/90 text-rose-700 hover:text-rose-800 font-extrabold text-[11px] py-2.5 rounded-xl transition border border-rose-200 cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      💰 Demander un Remboursement / Annuler
+                    </button>
+                  </div>
+                )}
               </form>
             </motion.div>
           </div>
@@ -1955,6 +2211,13 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
           </div>
         )}
       </AnimatePresence>
+
+      {showHelpModal && (
+        <InteractiveHelpModal
+          type="caisse"
+          onClose={() => setShowHelpModal(false)}
+        />
+      )}
     </div>
   );
 }

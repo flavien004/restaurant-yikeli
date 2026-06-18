@@ -2,6 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { useYikeliDb } from '../db';
 import { Plat, User, Client, Commande, Paiement, Depense, DepenseCategory, PlatCategory, getExpenseTypeForCategory } from '../types';
 import Logo from './Logo';
+import QRCodeGenerator from './QRCodeGenerator';
+import InteractiveHelpModal from './InteractiveHelpModal';
+import { HelpCircle } from 'lucide-react';
 import {
   TrendingUp,
   DollarSign,
@@ -36,6 +39,11 @@ import {
   Eye,
   Truck,
   Key,
+  Copy,
+  ExternalLink,
+  Smartphone,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -70,7 +78,8 @@ interface AdminInterfaceProps {
 
 export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInterfaceProps) {
   // Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'stock' | 'finances' | 'analyse' | 'employes' | 'annulations' | 'fournisseurs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'stock' | 'finances' | 'analyse' | 'employes' | 'annulations' | 'fournisseurs' | 'qrcodes'>('dashboard');
+  const [showHelpModal, setShowHelpModal] = useState(false);
 
   // Password change states
   const [changePasswordModalOpen, setChangePasswordModalOpen] = useState(false);
@@ -125,6 +134,12 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   const [historyCheckDate, setHistoryCheckDate] = useState<string>(() => new Date().toISOString().substring(0, 10));
 
   // Employee Creation/Editing State
+  const [platError, setPlatError] = useState<string | null>(null);
+  const [empError, setEmpError] = useState<string | null>(null);
+  const [supError, setSupError] = useState<string | null>(null);
+  const [stockError, setStockError] = useState<string | null>(null);
+  const [depError, setDepError] = useState<string | null>(null);
+
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<User | null>(null);
   const [empName, setEmpName] = useState('');
@@ -165,6 +180,30 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportDate, setReportDate] = useState<string>(() => new Date().toISOString().substring(0, 10));
 
+  // Grand Livre des Ventes filter states
+  const [salesPeriod, setSalesPeriod] = useState<'month' | 'today' | 'week' | 'custom' | 'all'>('month');
+  const [salesStartDate, setSalesStartDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [salesEndDate, setSalesEndDate] = useState<string>(() => new Date().toISOString().substring(0, 10));
+
+  // Grand Livre des Dépenses filter states
+  const [expensesPeriod, setExpensesPeriod] = useState<'month' | 'today' | 'week' | 'custom' | 'all'>('month');
+  const [expensesStartDate, setExpensesStartDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [expensesEndDate, setExpensesEndDate] = useState<string>(() => new Date().toISOString().substring(0, 10));
+
+  // Journal des Opérations filter states
+  const [journalPeriod, setJournalPeriod] = useState<'month' | 'today' | 'week' | 'custom' | 'all'>('month');
+  const [journalStartDate, setJournalStartDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+  });
+  const [journalEndDate, setJournalEndDate] = useState<string>(() => new Date().toISOString().substring(0, 10));
+
   // Filter logic helpers
   const filteredData = useMemo(() => {
     let start = new Date(TODAY_DATE);
@@ -176,10 +215,15 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
     if (periodFilter === 'today') {
       // already set to today
     } else if (periodFilter === 'week') {
-      start.setDate(TODAY_DATE.getDate() - 7);
+      const copy = new Date(TODAY_DATE);
+      copy.setDate(copy.getDate() - 7);
+      start = copy;
+      start.setHours(0, 0, 0, 0);
     } else if (periodFilter === 'month') {
-      start = new Date('2026-05-01T00:00:00');
-      end = new Date('2026-05-31T23:59:59');
+      const year = TODAY_DATE.getFullYear();
+      const month = TODAY_DATE.getMonth(); // 0-11
+      start = new Date(year, month, 1, 0, 0, 0, 0);
+      end = new Date(year, month + 1, 0, 23, 59, 59, 999);
     } else if (periodFilter === 'custom') {
       start = new Date(startDateStr + 'T00:00:00');
       end = new Date(endDateStr + 'T23:59:59');
@@ -197,8 +241,9 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
       return d >= start && d <= end;
     });
 
-    // Filter Expenses
+    // Filter Expenses (exclure les dépenses caisse non validées des calculs financiers)
     const filteredDeps = db.depenses.filter((dep) => {
+      if (dep.status && dep.status !== 'PAYEE') return false;
       const d = new Date(dep.date + 'T12:00:00'); // set mid day to avoid timezone slip
       return d >= start && d <= end;
     });
@@ -232,19 +277,178 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
     };
   }, [periodFilter, startDateStr, endDateStr, db.commandes, db.paiements, db.depenses, selectedCategoryFilter, db.plats]);
 
-  const displayedDepenses = useMemo(() => {
-    if (selectedFiltreDepenseCategory === 'ALL') {
-      return filteredData.depenses;
+  const filteredPaiementsForLedger = useMemo(() => {
+    let start = new Date(TODAY_DATE);
+    start.setHours(0, 0, 0, 0);
+
+    let end = new Date(TODAY_DATE);
+    end.setHours(23, 59, 59, 999);
+
+    if (salesPeriod === 'today') {
+      // already set to today
+    } else if (salesPeriod === 'week') {
+      const copy = new Date(TODAY_DATE);
+      copy.setDate(copy.getDate() - 7);
+      start = copy;
+      start.setHours(0, 0, 0, 0);
+    } else if (salesPeriod === 'month') {
+      const year = TODAY_DATE.getFullYear();
+      const month = TODAY_DATE.getMonth();
+      start = new Date(year, month, 1, 0, 0, 0, 0);
+      end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+    } else if (salesPeriod === 'custom') {
+      start = new Date(salesStartDate + 'T00:00:00');
+      end = new Date(salesEndDate + 'T23:59:59');
+    } else if (salesPeriod === 'all') {
+      start = new Date('1970-01-01T00:00:00');
+      end = new Date('2099-12-31T23:59:59');
     }
-    return filteredData.depenses.filter((d) => d.category === selectedFiltreDepenseCategory);
-  }, [filteredData.depenses, selectedFiltreDepenseCategory]);
+
+    return db.paiements.filter((p) => {
+      const d = new Date(p.createdAt);
+      return d >= start && d <= end;
+    });
+  }, [salesPeriod, salesStartDate, salesEndDate, db.paiements, TODAY_DATE]);
 
   const displayedPaiements = useMemo(() => {
     if (selectedFiltrePayMethod === 'ALL') {
-      return filteredData.paiements;
+      return filteredPaiementsForLedger;
     }
-    return filteredData.paiements.filter((p) => p.method === selectedFiltrePayMethod);
-  }, [filteredData.paiements, selectedFiltrePayMethod]);
+    return filteredPaiementsForLedger.filter((p) => p.method === selectedFiltrePayMethod);
+  }, [filteredPaiementsForLedger, selectedFiltrePayMethod]);
+
+  const filteredDepensesForLedger = useMemo(() => {
+    let start = new Date(TODAY_DATE);
+    start.setHours(0, 0, 0, 0);
+
+    let end = new Date(TODAY_DATE);
+    end.setHours(23, 59, 59, 999);
+
+    if (expensesPeriod === 'today') {
+      // already set to today
+    } else if (expensesPeriod === 'week') {
+      const copy = new Date(TODAY_DATE);
+      copy.setDate(copy.getDate() - 7);
+      start = copy;
+      start.setHours(0, 0, 0, 0);
+    } else if (expensesPeriod === 'month') {
+      const year = TODAY_DATE.getFullYear();
+      const month = TODAY_DATE.getMonth();
+      start = new Date(year, month, 1, 0, 0, 0, 0);
+      end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+    } else if (expensesPeriod === 'custom') {
+      start = new Date(expensesStartDate + 'T00:00:00');
+      end = new Date(expensesEndDate + 'T23:59:59');
+    } else if (expensesPeriod === 'all') {
+      start = new Date('1970-01-01T00:00:00');
+      end = new Date('2099-12-31T23:59:59');
+    }
+
+    return db.depenses.filter((dep) => {
+      if (dep.status && dep.status !== 'PAYEE') return false;
+      const d = new Date(dep.date + 'T12:00:00');
+      return d >= start && d <= end;
+    });
+  }, [expensesPeriod, expensesStartDate, expensesEndDate, db.depenses, TODAY_DATE]);
+
+  const displayedDepenses = useMemo(() => {
+    if (selectedFiltreDepenseCategory === 'ALL') {
+      return filteredDepensesForLedger;
+    }
+    return filteredDepensesForLedger.filter((d) => d.category === selectedFiltreDepenseCategory);
+  }, [filteredDepensesForLedger, selectedFiltreDepenseCategory]);
+
+  // Operations Journal memoized data calculations
+  const operationsJournalData = useMemo(() => {
+    const opPayments = db.paiements.map((p) => {
+      const dateObj = new Date(p.createdAt);
+      return {
+        id: `pay-${p.id}`,
+        type: 'RECETTE' as const,
+        dateStr: p.createdAt.substring(0, 10),
+        dateTime: dateObj,
+        label: `Encaissement Commande #${p.commandeId} [Moyen: ${p.method}]`,
+        category: 'Vente',
+        amount: p.amount,
+        refId: p.commandeId,
+      };
+    });
+
+    const opExpenses = db.depenses
+      .filter((d) => !d.status || d.status === 'PAYEE')
+      .map((d) => {
+        const dateObj = new Date(d.date + 'T12:00:00');
+        return {
+          id: `dep-${d.id}`,
+          type: 'DEPENSE' as const,
+          dateStr: d.date,
+          dateTime: dateObj,
+          label: `Dépense [${d.category}] - ${d.description}`,
+          category: d.category,
+          amount: d.amount,
+          refId: d.id,
+        };
+      });
+
+    // Sort chronologically ascending
+    const sorted = [...opPayments, ...opExpenses].sort((a, b) => a.dateTime.getTime() - b.dateTime.getTime());
+
+    // Sequential running balance calculation
+    let currentBalance = 0;
+    return sorted.map((op) => {
+      if (op.type === 'RECETTE') {
+        currentBalance += op.amount;
+      } else {
+        currentBalance -= op.amount;
+      }
+      return {
+        ...op,
+        balance: currentBalance,
+      };
+    });
+  }, [db.paiements, db.depenses]);
+
+  const journalPeriodRange = useMemo(() => {
+    let start = new Date(TODAY_DATE);
+    start.setHours(0, 0, 0, 0);
+
+    let end = new Date(TODAY_DATE);
+    end.setHours(23, 59, 59, 999);
+
+    if (journalPeriod === 'today') {
+      // already set to today
+    } else if (journalPeriod === 'week') {
+      const copy = new Date(TODAY_DATE);
+      copy.setDate(copy.getDate() - 7);
+      start = copy;
+      start.setHours(0, 0, 0, 0);
+    } else if (journalPeriod === 'month') {
+      const year = TODAY_DATE.getFullYear();
+      const month = TODAY_DATE.getMonth();
+      start = new Date(year, month, 1, 0, 0, 0, 0);
+      end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+    } else if (journalPeriod === 'custom') {
+      start = new Date(journalStartDate + 'T00:00:00');
+      end = new Date(journalEndDate + 'T23:59:59');
+    } else if (journalPeriod === 'all') {
+      start = new Date('1970-01-01T00:00:00');
+      end = new Date('2099-12-31T23:59:59');
+    }
+
+    return { start, end };
+  }, [journalPeriod, journalStartDate, journalEndDate, TODAY_DATE]);
+
+  const displayedJournalOps = useMemo(() => {
+    const { start, end } = journalPeriodRange;
+    return operationsJournalData.filter((op) => op.dateTime >= start && op.dateTime <= end);
+  }, [operationsJournalData, journalPeriodRange]);
+
+  const prePeriodBalance = useMemo(() => {
+    const { start } = journalPeriodRange;
+    const beforeOps = operationsJournalData.filter((op) => op.dateTime < start);
+    if (beforeOps.length === 0) return 0;
+    return beforeOps[beforeOps.length - 1].balance;
+  }, [operationsJournalData, journalPeriodRange]);
 
   // Financial Calculations
   const metrics = useMemo(() => {
@@ -416,15 +620,19 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
     };
   }, [filteredData]);
 
-  // Chart data for Yikeli Analyst tab (Janvier - May 2026)
+  // Chart data for Yikeli Analyst tab (Janvier to current month 2026)
   const analyseChartData = useMemo(() => {
-    const monthsList = [
-      { key: '2026-01', month: 'Janvier' },
-      { key: '2026-02', month: 'Février' },
-      { key: '2026-03', month: 'Mars' },
-      { key: '2026-04', month: 'Avril' },
-      { key: '2026-05', month: 'Mai' },
-    ];
+    const monthsFr = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+    const currentYear = TODAY_DATE.getFullYear();
+    const currentMonthIdx = TODAY_DATE.getMonth(); // 0-indexed
+
+    const monthsList = [];
+    for (let mIdx = 0; mIdx <= currentMonthIdx; mIdx++) {
+      monthsList.push({
+        key: `${currentYear}-${String(mIdx + 1).padStart(2, '0')}`,
+        month: monthsFr[mIdx],
+      });
+    }
 
     return monthsList.map((m) => {
       // Sales from payments
@@ -734,7 +942,11 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   // Plate modal save helper
   const handleSavePlat = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!platName.trim() || platPrice === '') return;
+    setPlatError(null);
+    if (!platName.trim() || platPrice === '') {
+      setPlatError("Veuillez renseigner le nom et le prix.");
+      return;
+    }
 
     const isStockValue = platIsStocked;
     const stockVal = platIsStocked ? (Number(platStock) || 0) : undefined;
@@ -742,31 +954,40 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
     const expDelayVal = platIsStocked ? (platExpirationDelay.trim() || undefined) : undefined;
     const buyingCostVal = platIsStocked && platBuyingCost !== '' ? Number(platBuyingCost) : undefined;
 
-    if (editingPlat) {
-      db.updatePlat(
-        editingPlat.id,
-        platName.trim(),
-        Number(platPrice),
-        platCategory as any,
-        editingPlat.isActive,
-        isStockValue,
-        lowStockVal,
-        expDelayVal,
-        platImage.trim(),
-        buyingCostVal
-      );
-    } else {
-      db.createPlat(
-        platName.trim(),
-        Number(platPrice),
-        platCategory as any,
-        isStockValue,
-        stockVal,
-        lowStockVal,
-        expDelayVal,
-        platImage.trim(),
-        buyingCostVal
-      );
+    try {
+      if (editingPlat) {
+        db.updatePlat(
+          editingPlat.id,
+          platName.trim(),
+          Number(platPrice),
+          platCategory as any,
+          editingPlat.isActive,
+          isStockValue,
+          lowStockVal,
+          expDelayVal,
+          platImage.trim(),
+          buyingCostVal
+        );
+      } else {
+        db.createPlat(
+          platName.trim(),
+          Number(platPrice),
+          platCategory as any,
+          isStockValue,
+          stockVal,
+          lowStockVal,
+          expDelayVal,
+          platImage.trim(),
+          buyingCostVal
+        );
+      }
+    } catch (err: any) {
+      if (err.errors && Array.isArray(err.errors)) {
+        setPlatError(`⚠️ ${err.errors[0]?.message}`);
+        return;
+      }
+      setPlatError("⚠️ Les informations saisies pour le plat sont incorrectes.");
+      return;
     }
 
     setEditingPlat(null);
@@ -782,6 +1003,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   };
 
   const handleEditPlatClick = (plat: Plat) => {
+    setPlatError(null);
     setEditingPlat(plat);
     setPlatName(plat.name);
     setPlatPrice(plat.price);
@@ -798,32 +1020,45 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   // Employee modal save helper
   const handleSaveEmployee = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!empName.trim() || !empPhone.trim()) return;
+    setEmpError(null);
+    if (!empName.trim() || !empPhone.trim()) {
+      setEmpError("Le nom et le téléphone sont obligatoires.");
+      return;
+    }
 
-    if (editingEmployee) {
-      db.updateEmployee(
-        editingEmployee.id,
-        empName.trim(),
-        empPhone.trim(),
-        empEmail.trim() || `${empName.trim().replaceAll(' ', '').toLowerCase()}@yikeli.com`,
-        empPoste.trim(),
-        empDateEmbauche,
-        empDateFinContrat,
-        empIsActive,
-        empUsername.trim(),
-        empPassword.trim()
-      );
-    } else {
-      db.createEmployee(
-        empName.trim(),
-        empPhone.trim(),
-        empEmail.trim() || `${empName.trim().replaceAll(' ', '').toLowerCase()}@yikeli.com`,
-        empPoste.trim(),
-        empDateEmbauche,
-        empDateFinContrat,
-        empUsername.trim(),
-        empPassword.trim()
-      );
+    try {
+      if (editingEmployee) {
+        db.updateEmployee(
+          editingEmployee.id,
+          empName.trim(),
+          empPhone.trim(),
+          empEmail.trim() || `${empName.trim().replaceAll(' ', '').toLowerCase()}@yikeli.com`,
+          empPoste.trim(),
+          empDateEmbauche,
+          empDateFinContrat,
+          empIsActive,
+          empUsername.trim(),
+          empPassword.trim()
+        );
+      } else {
+        db.createEmployee(
+          empName.trim(),
+          empPhone.trim(),
+          empEmail.trim() || `${empName.trim().replaceAll(' ', '').toLowerCase()}@yikeli.com`,
+          empPoste.trim(),
+          empDateEmbauche,
+          empDateFinContrat,
+          empUsername.trim(),
+          empPassword.trim()
+        );
+      }
+    } catch (err: any) {
+      if (err.errors && Array.isArray(err.errors)) {
+        setEmpError(`⚠️ ${err.errors[0]?.message}`);
+        return;
+      }
+      setEmpError("⚠️ Les données de l'employé sont invalides.");
+      return;
     }
 
     setEditingEmployee(null);
@@ -895,13 +1130,26 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   // Add/Modify expense helper
   const handleSaveExpense = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expDesc.trim() || expAmount === '') return;
+    setDepError(null);
+    if (!expDesc.trim() || expAmount === '') {
+      setDepError("Veuillez renseigner la description et le montant.");
+      return;
+    }
 
-    if (editingExpenseId) {
-      db.updateDepense(editingExpenseId, expCategory, expDesc.trim(), Number(expAmount), expDate);
-      setEditingExpenseId(null);
-    } else {
-      db.addDepense(expCategory, expDesc.trim(), Number(expAmount), expDate);
+    try {
+      if (editingExpenseId) {
+        db.updateDepense(editingExpenseId, expCategory, expDesc.trim(), Number(expAmount), expDate);
+        setEditingExpenseId(null);
+      } else {
+        db.addDepense(expCategory, expDesc.trim(), Number(expAmount), expDate);
+      }
+    } catch (err: any) {
+      if (err.errors && Array.isArray(err.errors)) {
+        setDepError(`⚠️ ${err.errors[0]?.message}`);
+        return;
+      }
+      setDepError("⚠️ Données saisies invalides pour la dépense.");
+      return;
     }
 
     setExpDesc('');
@@ -910,6 +1158,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
   };
 
   const startEditExpense = (dep: Depense) => {
+    setDepError(null);
     setEditingExpenseId(dep.id);
     setExpCategory(dep.category);
     setExpDesc(dep.description);
@@ -985,7 +1234,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                   : 'text-orange-100 hover:bg-orange-600'
               }`}
             >
-              Ce mois (Mai)
+              Ce mois ({["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"][TODAY_DATE.getMonth()]})
             </button>
             <button
               onClick={() => setPeriodFilter('custom')}
@@ -1011,6 +1260,42 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
             <Printer className="w-4 h-4 text-orange-600" />
             <span>Exporter PDF</span>
           </button>
+
+          <button
+            onClick={() => setShowHelpModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition shadow-sm border border-slate-700 cursor-pointer print:hidden shrink-0"
+            title="Aide et Documentation Interactive"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-yellow-300" />
+            <span>Aide Admin ❓</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setChangePasswordModalOpen(true);
+              setCurrentPasswordInput('');
+              setNewPasswordInput('');
+              setConfirmPasswordInput('');
+              setPasswordChangeError('');
+              setPasswordChangeSuccess(false);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 bg-orange-700/65 hover:bg-orange-700 text-white font-bold text-xs rounded-xl transition shadow-sm border border-orange-500/30 cursor-pointer print:hidden shrink-0"
+            title="Changer mon mot de passe"
+          >
+            <Key className="w-3.5 h-3.5 text-orange-200" />
+            <span>Mot de passe</span>
+          </button>
+
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-1.5 px-3.5 py-2.5 bg-red-700 hover:bg-red-800 text-white font-bold text-xs rounded-xl transition shadow-sm border border-red-600 cursor-pointer print:hidden shrink-0"
+              title="Se déconnecter"
+            >
+              <LogOut className="w-3.5 h-3.5 text-red-200" />
+              <span>Déconnexion</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1157,34 +1442,18 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
           )}
         </button>
 
-        <div className="ml-auto flex items-center gap-2 self-center">
-          <button
-            onClick={() => {
-              setChangePasswordModalOpen(true);
-              setCurrentPasswordInput('');
-              setNewPasswordInput('');
-              setConfirmPasswordInput('');
-              setPasswordChangeError('');
-              setPasswordChangeSuccess(false);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-gray-700 hover:text-white bg-slate-100 hover:bg-slate-705 rounded-xl transition-all border border-gray-200 cursor-pointer"
-            title="Changer mon mot de passe"
-          >
-            <Key className="w-3.5 h-3.5" />
-            <span>Changer mot de passe</span>
-          </button>
-
-          {onLogout && (
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-red-650 hover:text-white bg-red-50 hover:bg-red-500 rounded-xl transition-all border border-red-150 cursor-pointer"
-              title="Se déconnecter"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Déconnexion Gérant
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => setActiveTab('qrcodes')}
+          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
+            activeTab === 'qrcodes'
+              ? 'border-orange-500 text-orange-600 font-bold'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
+          }`}
+          id="tab-qrcodes"
+        >
+          <Smartphone className="w-4 h-4 text-orange-500" />
+          <span>Générateur QR Codes 📱</span>
+        </button>
       </div>
 
       {/* TAB CONTENT: DASHBOARD */}
@@ -1195,6 +1464,171 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6 printable-dashboard-element"
         >
+          {/* CLIENT ACCESS QR CODE / LINK INFORMATION FOR MANAGER */}
+          <div className="bg-white rounded-2xl p-5 border border-gray-150 shadow-sm space-y-3.5 print:hidden">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="p-3 bg-orange-100 text-orange-600 rounded-xl shrink-0 mt-0.5">
+                  <Smartphone className="w-5 h-5 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-extrabold text-slate-800">
+                    Lien Web Client &amp; QR Code de Table
+                  </h4>
+                  <p className="text-xs text-gray-500">
+                    Voici l'adresse URL exclusive pour la clientèle d'Abatta. Vos clients peuvent y accéder pour consulter la carte et commander depuis leur smartphone sans voir vos outils de gestion.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const clientUrl = `${window.location.origin}${window.location.pathname}?view=client`;
+                    navigator.clipboard.writeText(clientUrl);
+                    alert("📋 Lien Client copié avec succès ! Vous pouvez l'imprimer sur un QR Code ou l'envoyer par WhatsApp.");
+                  }}
+                  className="bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-[10px] py-2 px-3.5 rounded-xl shadow-sm transition active:scale-[0.98] cursor-pointer flex items-center gap-1.5 uppercase tracking-wide"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copier l'adresse Client
+                </button>
+                <a
+                  href={`${window.location.origin}${window.location.pathname}?view=client`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-[10px] py-2 px-3.5 rounded-xl border border-gray-200 shadow-sm transition flex items-center gap-1.5 uppercase tracking-wide text-center"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Tester l'interface Client
+                </a>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-2.5 rounded-xl border border-gray-200 text-[10px] text-slate-600 font-mono select-all truncate break-all">
+              {window.location.origin}{window.location.pathname}?view=client
+            </div>
+          </div>
+
+          {/* SECURED PHYSICAL SYSTEM BACKUP AND FILE RESTORE MANAGEMENT DEVICE */}
+          <div className="bg-white rounded-2xl p-6 border border-gray-150 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6 print:hidden">
+            <div className="space-y-2 col-span-1">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-purple-50 text-purple-600 rounded-xl">
+                  <Shield className="w-5 h-5" />
+                </span>
+                <h4 className="text-sm font-extrabold text-slate-800">
+                  Sauvegarde physique de sécurité anti-panne
+                </h4>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed font-normal">
+                Enregistrez votre base de données dans un fichier physique Yikéli sur votre ordinateur ou smartphone. En cas de perte de données, de réinstallation de machine ou de changement de serveur local, vous pourrez restaurer l'intégralité de vos plats, commandes, caisse, stocks, dépenses et réglages à 100%.
+              </p>
+              
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    try {
+                      const fullDatabaseSnapshot = {
+                        plats: db.plats,
+                        users: db.users,
+                        clients: db.clients,
+                        commandes: db.commandes,
+                        paiements: db.paiements,
+                        depenses: db.depenses,
+                        menuJour: db.menuJour,
+                        platCategories: db.platCategories,
+                        paymentMethods: db.paymentMethods,
+                        depenseCategories: db.depenseCategories,
+                        stockEntries: db.stockEntries,
+                        backupAt: new Date().toISOString()
+                      };
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(fullDatabaseSnapshot, null, 2));
+                      const downloadAnchor = document.createElement('a');
+                      downloadAnchor.setAttribute("href", dataStr);
+                      const today = new Date().toISOString().substring(0, 10);
+                      downloadAnchor.setAttribute("download", `yikeli_sauvegarde_integrale_${today}.json`);
+                      document.body.appendChild(downloadAnchor);
+                      downloadAnchor.click();
+                      downloadAnchor.remove();
+                    } catch (err) {
+                      alert("❌ Impossible de générer la sauvegarde physique : " + err);
+                    }
+                  }}
+                  className="bg-purple-650 hover:bg-purple-700 text-white font-extrabold text-[10px] py-3 px-4 rounded-xl shadow-sm transition active:scale-[0.98] cursor-pointer flex items-center gap-1.5 uppercase tracking-wide"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Exporter la sauvegarde (.json)
+                </button>
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 md:border-t-0 md:border-l md:pl-6 pt-6 md:pt-0 space-y-4 col-span-1">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-amber-50 text-amber-650 rounded-xl">
+                  <RotateCcw className="w-5 h-5 animate-spin" style={{ animationDuration: '6s' }} />
+                </span>
+                <h4 className="text-sm font-extrabold text-slate-800">
+                  Restauration complète à partir d'un fichier
+                </h4>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed font-normal">
+                Sélectionnez un fichier de sauvegarde <strong>yikeli_sauvegarde_integrale_*.json</strong> préalablement téléchargé pour réinjecter toutes les tables et rétablir le tableau de bord.
+              </p>
+
+              <div className="space-y-2">
+                <input
+                  type="file"
+                  id="backup-file-picker"
+                  accept=".json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      try {
+                        const parsed = JSON.parse(event.target?.result as string);
+                        if (!parsed.plats || !parsed.commandes || !parsed.clients) {
+                          alert("❌ Format de fichier invalide. Ce fichier n'est pas une sauvegarde valide du logiciel Yikéli.");
+                          return;
+                        }
+
+                        if (confirm("⚠️ ATTENTION : La restauration écrasera TOUTES les données actuelles du restaurant par celles du fichier de sauvegarde. Voulez-vous continuer ?")) {
+                          localStorage.setItem('yikeli_plats', JSON.stringify(parsed.plats));
+                          localStorage.setItem('yikeli_users', JSON.stringify(parsed.users));
+                          localStorage.setItem('yikeli_clients', JSON.stringify(parsed.clients));
+                          localStorage.setItem('yikeli_commandes', JSON.stringify(parsed.commandes));
+                          localStorage.setItem('yikeli_paiements', JSON.stringify(parsed.paiements));
+                          localStorage.setItem('yikeli_depenses', JSON.stringify(parsed.depenses));
+                          localStorage.setItem('yikeli_menu_jour', JSON.stringify(parsed.menuJour || []));
+                          localStorage.setItem('yikeli_plat_categories', JSON.stringify(parsed.platCategories || []));
+                          localStorage.setItem('yikeli_payment_methods', JSON.stringify(parsed.paymentMethods || []));
+                          localStorage.setItem('yikeli_depense_categories', JSON.stringify(parsed.depenseCategories || []));
+                          localStorage.setItem('yikeli_stock_entries', JSON.stringify(parsed.stockEntries || []));
+                          alert("🎉 Restauration accomplie avec succès ! L'application va se recharger pour finaliser l'initialisation.");
+                          window.location.reload();
+                        }
+                      } catch (err) {
+                        alert("❌ Erreur lors de la lecture du fichier de sauvegarde : " + err);
+                      }
+                    };
+                    reader.readAsText(file);
+                  }}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => document.getElementById('backup-file-picker')?.click()}
+                  className="w-full bg-slate-50 hover:bg-slate-100 text-slate-705 font-bold text-[10px] py-3 px-4 rounded-xl border border-gray-200 shadow-sm transition flex items-center justify-center gap-1.5 uppercase tracking-wide text-center"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                  Sélectionner un fichier et restaurer (.json)
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* PRINT-ONLY HEADER FOR DASHBOARD PDF */}
           <div className="hidden print:block border-b-2 border-slate-800 pb-5 mb-6 text-left w-full">
             <div className="flex items-center justify-between">
@@ -1720,11 +2154,11 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                                 Aucune évaluation textuelle reçue pour le moment.
                               </div>
                             ) : (
-                              ratedCmds.slice().reverse().map((cmd) => {
+                              ratedCmds.slice().reverse().map((cmd, idx) => {
                                 const cashierName = db.users.find(u => u.id === cmd.userId)?.name || 'Caisse';
                                 const parsedOrderId = cmd.id.includes('-') ? cmd.id.split('-')[1] : cmd.id;
                                 return (
-                                  <div key={cmd.id} className="p-2.5 bg-gray-50 border border-gray-150 rounded-xl space-y-1 text-[11px] transition hover:bg-indigo-50/20">
+                                  <div key={`${cmd.id}-${idx}`} className="p-2.5 bg-gray-50 border border-gray-150 rounded-xl space-y-1 text-[11px] transition hover:bg-indigo-50/20">
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="font-extrabold text-gray-800">Cdt #{parsedOrderId}</span>
                                       <span className="text-[9px] text-gray-400 font-mono">Caissier: {cashierName.split(' ')[0]}</span>
@@ -2339,15 +2773,28 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (!selectedStockPlatId || !stockEntryQty) return;
-                  db.addStockEntry(
-                    selectedStockPlatId,
-                    Number(stockEntryQty),
-                    stockEntryComment.trim() || undefined,
-                    undefined, // customDate is undefined (now)
-                    stockEntryBuyingPrice !== '' ? Number(stockEntryBuyingPrice) : undefined,
-                    stockEntrySupplierId || undefined
-                  );
+                  setStockError(null);
+                  if (!selectedStockPlatId || !stockEntryQty) {
+                    setStockError("Veuillez sélectionner un article et une quantité.");
+                    return;
+                  }
+                  try {
+                    db.addStockEntry(
+                      selectedStockPlatId,
+                      Number(stockEntryQty),
+                      stockEntryComment.trim() || undefined,
+                      undefined, // customDate is undefined (now)
+                      stockEntryBuyingPrice !== '' ? Number(stockEntryBuyingPrice) : undefined,
+                      stockEntrySupplierId || undefined
+                    );
+                  } catch (err: any) {
+                    if (err.errors && Array.isArray(err.errors)) {
+                      setStockError(`⚠️ ${err.errors[0]?.message}`);
+                      return;
+                    }
+                    setStockError("⚠️ Erreur lors de l'approvisionnement.");
+                    return;
+                  }
                   setSelectedStockPlatId('');
                   setStockEntryQty('');
                   setStockEntryComment('');
@@ -2356,6 +2803,12 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                 }}
                 className="space-y-4"
               >
+                {stockError && (
+                  <div className="bg-rose-50 border border-rose-150 p-3 rounded-xl flex items-center gap-2 text-rose-800 text-xs font-semibold">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{stockError}</span>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-gray-655 block">Article / Plat à approvisionner</label>
                   <select
@@ -2698,12 +3151,91 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
             </div>
           </div>
 
+          {/* COMPTABILISATION DES DEPENSES EN ATTENTE ENVOYEES PAR LES CAISSIERS */}
+          {db.depenses.filter(d => d.status === 'EN_ATTENTE').length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 text-amber-850">
+                <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-ping"></span>
+                <h4 className="text-sm font-bold flex items-center gap-1.5">
+                  ⏳ Demandes de Décaissement en Attente d'Approbation ({db.depenses.filter(d => d.status === 'EN_ATTENTE').length})
+                </h4>
+              </div>
+              <p className="text-xs text-amber-900 leading-relaxed font-semibold">
+                Les caissiers ont soumis les dépenses suivantes. Veuillez les vérifier puis cliquer sur <strong className="text-emerald-750">Valider</strong> pour les enregistrer officiellement dans les finances ou <strong className="text-red-700">Rejeter</strong> pour rejeter la demande.
+              </p>
+              
+              <div className="overflow-x-auto rounded-xl border border-amber-200/60 bg-white">
+                <table className="w-full text-left text-xs min-w-[550px]">
+                  <thead className="bg-amber-500/10 text-amber-950 font-bold uppercase border-b border-amber-250">
+                    <tr>
+                      <th className="p-3 text-[10px]">Date</th>
+                      <th className="p-3 text-[10px]">Caissier / Demandeur</th>
+                      <th className="p-3 text-[10px]">Catégorie</th>
+                      <th className="p-3 text-[10px]">Description / Motif</th>
+                      <th className="p-3 text-[10px]">Montant</th>
+                      <th className="p-3 text-[10px] text-center">Actions Décisionnelles</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-100 font-medium">
+                    {db.depenses.filter(d => d.status === 'EN_ATTENTE').map((dep, idx) => (
+                      <tr key={`${dep.id}-${idx}`} className="hover:bg-amber-50/30 text-slate-800">
+                        <td className="p-3 font-mono text-[10px] text-gray-500 whitespace-nowrap">{dep.date}</td>
+                        <td className="p-3 font-extrabold text-slate-900">{dep.submittedBy || 'Caissier'}</td>
+                        <td className="p-3">
+                          <span className="bg-amber-100/60 border border-amber-200/50 text-amber-900 px-2 py-0.5 rounded-md font-bold text-[10px]">
+                            {dep.category}
+                          </span>
+                        </td>
+                        <td className="p-3 text-[11px] font-normal leading-normal">{dep.description}</td>
+                        <td className="p-3 font-mono font-extrabold text-red-650 whitespace-nowrap text-xs">{new Intl.NumberFormat('fr-FR').format(dep.amount)} FCFA</td>
+                        <td className="p-3">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                db.approveDepense(dep.id);
+                                alert(`La dépense de ${new Intl.NumberFormat('fr-FR').format(dep.amount)} FCFA pour "${dep.description}" a été validée et enregistrée !`);
+                              }}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-750 text-white font-extrabold rounded-lg shadow-sm transition duration-150 cursor-pointer text-[10px] uppercase tracking-wide flex items-center gap-1"
+                            >
+                              <Check className="w-3 h-3" />
+                              <span>Valider</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (confirm("Voulez-vous rejeter cette demande de dépense ?")) {
+                                  db.rejectDepense(dep.id);
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-red-50 hover:bg-red-500 border border-red-200 text-red-600 hover:text-white font-extrabold rounded-lg shadow-sm transition duration-150 cursor-pointer text-[10px] uppercase tracking-wide flex items-center gap-1"
+                            >
+                              <X className="w-3 h-3" />
+                              <span>Rejeter</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* EXPENSES LOGGING BLOCK FORM */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
             <h3 className="text-base font-bold text-gray-800 mb-1">
               {editingExpenseId ? 'Modifier la dépense sélectionnée' : 'Enregistrer une nouvelle dépense restaurant'}
             </h3>
             <p className="text-xs text-gray-400 mb-4">Saisissez les charges pour évaluer le bénéfice net de votre restaurant.</p>
+
+            {depError && (
+              <div className="bg-rose-50 border border-rose-150 p-3.5 rounded-2xl flex items-center gap-2 text-rose-800 text-xs font-semibold mb-4">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{depError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleSaveExpense} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
               <div className="space-y-1">
@@ -2820,7 +3352,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                 </div>
               </div>
             </div>
-            
+
             {/* Sales Encaissées Table Ledger */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-3">
@@ -2847,12 +3379,46 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                     onChange={(e) => setSelectedFiltrePayMethod(e.target.value)}
                     className="bg-slate-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-[10px] text-gray-700 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
                   >
-                    <option value="ALL">Tous les modes ({filteredData.paiements.length})</option>
+                    <option value="ALL">Tous les modes ({filteredPaiementsForLedger.length})</option>
                     {Array.from(new Set(db.paymentMethods || ['ESPECE', 'WAVE', 'ORANGE_MONEY', 'DJAMO'])).map((m, idx) => (
                       <option key={`${m}-${idx}`} value={m}>{m === 'ESPECE' ? 'Espèces (Cash)' : m}</option>
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Independent sales period filter bar */}
+              <div className="flex flex-wrap items-center gap-3 bg-slate-50/50 p-3 rounded-xl border border-gray-100 print:hidden text-xs">
+                <span className="font-bold text-gray-500">Filtrer la période :</span>
+                <select
+                  value={salesPeriod}
+                  onChange={(e) => setSalesPeriod(e.target.value as any)}
+                  className="bg-white border border-gray-200 rounded-lg px-2.5 py-1 text-[11px] text-gray-700 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
+                >
+                  <option value="month">Ce mois en cours (Juin 2026)</option>
+                  <option value="today">Aujourd'hui</option>
+                  <option value="week">7 derniers jours</option>
+                  <option value="all">Toutes les dates</option>
+                  <option value="custom">Période personnalisée</option>
+                </select>
+
+                {salesPeriod === 'custom' && (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={salesStartDate}
+                      onChange={(e) => setSalesStartDate(e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[11px] text-gray-700 font-bold focus:ring-1 focus:ring-orange-500"
+                    />
+                    <span className="text-gray-400">à</span>
+                    <input
+                      type="date"
+                      value={salesEndDate}
+                      onChange={(e) => setSalesEndDate(e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[11px] text-gray-700 font-bold focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="overflow-x-auto">
@@ -2977,12 +3543,46 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                     onChange={(e) => setSelectedFiltreDepenseCategory(e.target.value)}
                     className="bg-slate-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-[10px] text-gray-700 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
                   >
-                    <option value="ALL">Toutes les catégories ({filteredData.depenses.length})</option>
+                    <option value="ALL">Toutes les catégories ({filteredDepensesForLedger.length})</option>
                     {Array.from(new Set(db.depenseCategories || ['Loyer', 'Factures', 'Provisions', 'Transport', 'Livraison', 'Taxes', 'Salaires', 'Réparations', 'Autre'])).map((cat, idx) => (
                       <option key={`${cat}-${idx}`} value={cat}>{cat}</option>
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Independent expenses period filter bar */}
+              <div className="flex flex-wrap items-center gap-3 bg-slate-50/50 p-3 rounded-xl border border-gray-100 print:hidden text-xs">
+                <span className="font-bold text-gray-500">Filtrer la période :</span>
+                <select
+                  value={expensesPeriod}
+                  onChange={(e) => setExpensesPeriod(e.target.value as any)}
+                  className="bg-white border border-gray-200 rounded-lg px-2.5 py-1 text-[11px] text-gray-700 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
+                >
+                  <option value="month">Ce mois en cours (Juin 2026)</option>
+                  <option value="today">Aujourd'hui</option>
+                  <option value="week">7 derniers jours</option>
+                  <option value="all">Toutes les dates</option>
+                  <option value="custom">Période personnalisée</option>
+                </select>
+
+                {expensesPeriod === 'custom' && (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={expensesStartDate}
+                      onChange={(e) => setExpensesStartDate(e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[11px] text-gray-700 font-bold focus:ring-1 focus:ring-orange-500"
+                    />
+                    <span className="text-gray-400">à</span>
+                    <input
+                      type="date"
+                      value={expensesEndDate}
+                      onChange={(e) => setExpensesEndDate(e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[11px] text-gray-700 font-bold focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="overflow-x-auto">
@@ -3062,6 +3662,267 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
 
           </div>
 
+          {/* JOURNAL D'OPÉRATIONS ET DE TRÉSORERIE CARD */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5 text-left">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-gray-100 pb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-850 flex items-center gap-2">
+                  📑 Journal Général des Opérations (Trésorerie de Caisse)
+                </h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Livre comptable auxiliaire de trésorerie consolidant chronologiquement toutes les recettes (ventes) et charges payées avec calcul de solde courant ligne par ligne.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 print:hidden shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    document.body.classList.add('print-operations-journal-only');
+                    window.print();
+                    document.body.classList.remove('print-operations-journal-only');
+                  }}
+                  className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-[10px] px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                >
+                  <Printer className="w-3 h-3" />
+                  Imprimer le Journal
+                </button>
+                <select
+                  value={journalPeriod}
+                  onChange={(e) => setJournalPeriod(e.target.value as any)}
+                  className="bg-slate-50 border border-gray-200 rounded-xl px-2.5 py-1.5 text-[10px] text-gray-700 font-bold focus:outline-none focus:ring-1 focus:ring-orange-500 cursor-pointer"
+                >
+                  <option value="month">Ce mois en cours (Juin 2026)</option>
+                  <option value="today">Aujourd'hui</option>
+                  <option value="week">7 derniers jours</option>
+                  <option value="all">Toutes les opérations</option>
+                  <option value="custom">Période personnalisée</option>
+                </select>
+
+                {journalPeriod === 'custom' && (
+                  <div className="flex items-center gap-1.5 animate-fade-in">
+                    <input
+                      type="date"
+                      value={journalStartDate}
+                      onChange={(e) => setJournalStartDate(e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[10px] text-gray-700 font-bold focus:ring-1 focus:ring-orange-500"
+                    />
+                    <span className="text-gray-400 text-[10px]">à</span>
+                    <input
+                      type="date"
+                      value={journalEndDate}
+                      onChange={(e) => setJournalEndDate(e.target.value)}
+                      className="bg-white border border-gray-200 rounded-lg px-2 py-0.5 text-[10px] text-gray-700 font-bold focus:ring-1 focus:ring-orange-500"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Combined Metrics summary row for the active period selection */}
+            {(() => {
+              let periodRecettes = 0;
+              let periodDepenses = 0;
+              displayedJournalOps.forEach((op) => {
+                if (op.type === 'RECETTE') {
+                  periodRecettes += op.amount;
+                } else {
+                  periodDepenses += op.amount;
+                }
+              });
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-slate-50/50 p-4 rounded-xl border border-gray-150">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wide text-gray-400">🔄 Report à Nouveau (Initial)</span>
+                    <p className="text-base font-black text-slate-800 font-mono">{formatFCFA(prePeriodBalance)}</p>
+                  </div>
+                  <div className="space-y-1 border-t sm:border-t-0 sm:border-l border-gray-200 sm:pl-4">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wide text-green-500">📥 Recettes (+) sur la Période</span>
+                    <p className="text-base font-black text-green-650 font-mono">+{formatFCFA(periodRecettes)}</p>
+                  </div>
+                  <div className="space-y-1 border-t lg:border-t-0 lg:border-l border-gray-200 lg:pl-4">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wide text-rose-500">📤 Dépenses (-) sur la Période</span>
+                    <p className="text-base font-black text-rose-650 font-mono">-{formatFCFA(periodDepenses)}</p>
+                  </div>
+                  <div className="space-y-1 border-t lg:border-t-0 lg:border-l border-gray-200 lg:pl-4 bg-orange-500/5 p-2 rounded-lg">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wide text-orange-700 block">💰 Solde de Trésorerie Final</span>
+                    <p className="text-base font-black text-orange-950 font-mono">{formatFCFA(prePeriodBalance + periodRecettes - periodDepenses)}</p>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Interactive Operations Table with running balance */}
+            <div className="overflow-x-auto rounded-xl border border-gray-150">
+              <table className="w-full text-left font-sans">
+                <thead>
+                  <tr className="bg-slate-50 text-gray-500 font-bold text-[10px] border-b border-gray-150 uppercase">
+                    <th className="p-3">Séquence (Date & Heure)</th>
+                    <th className="p-3">Nature</th>
+                    <th className="p-3">Réf ID</th>
+                    <th className="p-3 text-left">Mouvement / Libellé de l'Opération</th>
+                    <th className="p-3 text-right">Recette (Débit +)</th>
+                    <th className="p-3 text-right">Dépense (Crédit -)</th>
+                    <th className="p-3 text-right font-black bg-slate-100/50">Solde Courant</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-[11px] font-medium text-gray-750">
+                  {prePeriodBalance !== 0 && (
+                    <tr className="bg-amber-50/20 text-slate-850 italic font-semibold">
+                      <td className="p-3 border-r border-gray-100 text-gray-500" colSpan={4}>
+                        🔄 REPORT À NOUVEAU COMPTABLE (SOLDE INITIAL)
+                      </td>
+                      <td className="p-3 text-right border-r border-gray-100">-</td>
+                      <td className="p-3 text-right border-r border-gray-100">-</td>
+                      <td className="p-3 text-right font-black font-mono text-slate-800 bg-slate-50/70">
+                        {formatFCFA(prePeriodBalance)}
+                      </td>
+                    </tr>
+                  )}
+
+                  {displayedJournalOps.map((op, idx) => {
+                    const isReceipt = op.type === 'RECETTE';
+                    return (
+                      <tr key={`${op.id}-${idx}`} className="hover:bg-slate-50 transition">
+                        <td className="p-3 font-mono text-gray-400">
+                          {op.dateTime.toLocaleDateString('fr-FR')} • {op.dateTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="p-3">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-extrabold tracking-wide ${
+                            isReceipt ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                          }`}>
+                            {isReceipt ? 'RECETTE (CA)' : 'DEPENSE CHARGE'}
+                          </span>
+                        </td>
+                        <td className="p-3 font-mono text-gray-400">#{op.refId}</td>
+                        <td className="p-3 text-gray-800 text-left font-sans">{op.label}</td>
+                        <td className="p-3 text-right text-green-650 font-bold font-mono">
+                          {isReceipt ? `+${formatFCFA(op.amount)}` : '-'}
+                        </td>
+                        <td className="p-3 text-right text-rose-650 font-bold font-mono">
+                          {!isReceipt ? `-${formatFCFA(op.amount)}` : '-'}
+                        </td>
+                        <td className="p-3 text-right font-black font-mono text-slate-900 bg-slate-50/45">
+                          {formatFCFA(op.balance)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {displayedJournalOps.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-gray-450 italic font-medium">
+                        Aucune transaction comptable enregistrée pour cette plage de date.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* PRINT-ONLY OPERATIONS JOURNAL ELEMENT */}
+          <div className="hidden print:block printable-operations-journal-element bg-white p-10 text-black font-sans text-left">
+            <div className="flex items-center justify-between border-b-2 border-slate-900 pb-5 mb-5">
+              <div className="flex items-center gap-3">
+                <Logo size="sm" width={56} height={56} />
+                <div>
+                  <h2 className="text-lg font-bold uppercase tracking-wider text-slate-950 font-sans">Restaurant Yikéli • Journal Général des Opérations de Trésorerie</h2>
+                  <p className="text-[10px] text-slate-500 font-medium">Abidjan Route d'Abatta, près de Djorogobité 1 • Tél: +225 05 01 14 92 44</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-xs font-bold text-slate-600 font-mono block">Rapport Généré le : {new Date().toLocaleDateString('fr-FR')}</span>
+                <span className="text-[9px] font-semibold text-orange-600 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 uppercase">Simulateur ERP</span>
+              </div>
+            </div>
+            
+            <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl mb-6 text-xs">
+              <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider mb-2">Synthèse de Situation Financière</h3>
+              <div className="grid grid-cols-4 gap-4 text-xs font-medium">
+                <div>
+                  <span className="text-slate-500 block">Plage sélectionnée :</span>
+                  <span className="text-slate-900 font-bold font-mono">
+                    {journalPeriod === 'month' ? `Ce mois (Juin 2026)` :
+                     journalPeriod === 'today' ? "Aujourd'hui" :
+                     journalPeriod === 'week' ? "7 derniers jours" :
+                     journalPeriod === 'all' ? "Toutes les dates" : `du ${journalStartDate} au ${journalEndDate}`}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Report à Nouveau :</span>
+                  <span className="text-slate-950 font-bold font-mono text-gray-800">{formatFCFA(prePeriodBalance)}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Total Recettes (+) :</span>
+                  <span className="text-green-700 font-bold font-mono">+{formatFCFA(displayedJournalOps.filter(o => o.type === 'RECETTE').reduce((sum, o) => sum + o.amount, 0))}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Total Dépenses (-) :</span>
+                  <span className="text-rose-700 font-bold font-mono">-{formatFCFA(displayedJournalOps.filter(o => o.type === 'DEPENSE').reduce((sum, o) => sum + o.amount, 0))}</span>
+                </div>
+                <div className="col-span-4 border-t border-dashed border-slate-300 pt-2 mt-1 flex justify-between items-center text-sm font-extrabold text-slate-950">
+                  <span>SOLDE DE COMPTABILITÉ FINALE À LA CLÔTURE :</span>
+                  <span className="font-mono">{formatFCFA(prePeriodBalance + displayedJournalOps.filter(o => o.type === 'RECETTE').reduce((sum, o) => sum + o.amount, 0) - displayedJournalOps.filter(o => o.type === 'DEPENSE').reduce((sum, o) => sum + o.amount, 0))}</span>
+                </div>
+              </div>
+            </div>
+
+            <table className="w-full text-left text-[11px] border border-slate-900 border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-800 font-bold uppercase border-b border-slate-900">
+                  <th className="p-2 border-r border-slate-400">Heure & Date</th>
+                  <th className="p-2 border-r border-slate-400">Nature</th>
+                  <th className="p-2 border-r border-slate-400">Réf</th>
+                  <th className="p-2 border-r border-slate-400">Description Mouvement</th>
+                  <th className="p-2 text-right border-r border-slate-400">Recette (+)</th>
+                  <th className="p-2 text-right border-r border-slate-400">Dépense (-)</th>
+                  <th className="p-2 text-right font-black">Solde Net Caisse</th>
+                </tr>
+              </thead>
+              <tbody>
+                {prePeriodBalance !== 0 && (
+                  <tr className="bg-amber-50/25 italic font-bold border-b border-slate-300">
+                    <td className="p-2 border-r border-slate-300" colSpan={4}>🔄 REPORT À NOUVEAU COMPTABLE (SOLDE INITIAL)</td>
+                    <td className="p-2 text-right border-r border-slate-300">-</td>
+                    <td className="p-2 text-right border-r border-slate-300">-</td>
+                    <td className="p-2 text-right font-black font-mono border-slate-900">{formatFCFA(prePeriodBalance)}</td>
+                  </tr>
+                )}
+                {displayedJournalOps.map((op, idx) => {
+                  const isReceipt = op.type === 'RECETTE';
+                  return (
+                    <tr key={`${op.id}-${idx}`} className="border-b border-slate-350 font-medium">
+                      <td className="p-2 border-r border-slate-300 font-mono text-[10px]">
+                        {op.dateTime.toLocaleDateString('fr-FR')} {op.dateTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="p-2 border-r border-slate-300 font-bold">
+                        {isReceipt ? 'RECETTE (CA)' : 'DEPENSE'}
+                      </td>
+                      <td className="p-2 border-r border-slate-300 font-mono text-[10px] text-slate-500">{op.refId}</td>
+                      <td className="p-2 border-r border-slate-300 text-slate-800">{op.label}</td>
+                      <td className="p-2 text-right border-r border-slate-300 text-green-700 font-bold font-mono">
+                        {isReceipt ? `+${formatFCFA(op.amount)}` : '-'}
+                      </td>
+                      <td className="p-2 text-right border-r border-slate-300 text-rose-700 font-bold font-mono">
+                        {!isReceipt ? `-${formatFCFA(op.amount)}` : '-'}
+                      </td>
+                      <td className="p-2 text-right font-black font-mono text-slate-900 bg-slate-50/50">
+                        {formatFCFA(op.balance)}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {displayedJournalOps.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="p-4 text-center italic text-slate-400">Aucune opération recensée sur cette période.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
           {/* BILAN DE CAISSE PAR CAISSIER SECTION */}
           <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
@@ -3113,9 +3974,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
               // Filter payments specifically recorded by the selected cashier (or everyone if ALL) today
               const auditPayments = db.paiements.filter((p) => {
                 const todayStr = new Date().toISOString().substring(0, 10);
-                const hasTodayCmds = db.commandes.some(c => (c.createdAt || '').startsWith(todayStr));
-                const targetDate = hasTodayCmds ? todayStr : '2026-05-23';
-                const isToday = (p.createdAt || '').startsWith(targetDate);
+                const isToday = (p.createdAt || '').startsWith(todayStr);
                 if (!isToday) return false;
                 if (selectedCashierIdAudit !== 'ALL') {
                   return p.userId === selectedCashierIdAudit;
@@ -4174,23 +5033,36 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (!supFormName || !supFormPhone) return;
-                  if (editingSupplierId) {
-                    db.updateSupplier(
-                      editingSupplierId,
-                      supFormName,
-                      supFormPhone,
-                      supFormEmail || undefined,
-                      supFormAddress || undefined
-                    );
-                    setEditingSupplierId(null);
-                  } else {
-                    db.createSupplier(
-                      supFormName,
-                      supFormPhone,
-                      supFormEmail || undefined,
-                      supFormAddress || undefined
-                    );
+                  setSupError(null);
+                  if (!supFormName || !supFormPhone) {
+                    setSupError("Veuillez remplir les informations obligatoires.");
+                    return;
+                  }
+                  try {
+                    if (editingSupplierId) {
+                      db.updateSupplier(
+                        editingSupplierId,
+                        supFormName,
+                        supFormPhone,
+                        supFormEmail || undefined,
+                        supFormAddress || undefined
+                      );
+                      setEditingSupplierId(null);
+                    } else {
+                      db.createSupplier(
+                        supFormName,
+                        supFormPhone,
+                        supFormEmail || undefined,
+                        supFormAddress || undefined
+                      );
+                    }
+                  } catch (err: any) {
+                    if (err.errors && Array.isArray(err.errors)) {
+                      setSupError(`⚠️ ${err.errors[0]?.message}`);
+                      return;
+                    }
+                    setSupError("⚠️ Informations de fournisseur incorrectes.");
+                    return;
                   }
                   setSupFormName('');
                   setSupFormPhone('');
@@ -4199,6 +5071,12 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
                 }}
                 className="space-y-4"
               >
+                {supError && (
+                  <div className="bg-rose-50 border border-rose-150 p-3 rounded-xl flex items-center gap-2 text-rose-800 text-xs font-semibold">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{supError}</span>
+                  </div>
+                )}
                 <div className="space-y-1 text-left">
                   <label className="text-xs font-semibold text-gray-655 block">Nom du Grossiste / Fournisseur *</label>
                   <input
@@ -4356,6 +5234,17 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
           </div>
         </motion.div>
       )}
+
+      {activeTab === 'qrcodes' && (
+        <motion.div
+          key="qrcodes-tab"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6"
+        >
+          <QRCodeGenerator />
+        </motion.div>
+      )}
       <AnimatePresence>
         {showPlatModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
@@ -4378,6 +5267,12 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
               <p className="text-xs text-gray-400 mb-4">Saisissez les informations clés.</p>
 
               <form onSubmit={handleSavePlat} className="space-y-4">
+                {platError && (
+                  <div className="bg-rose-50 border border-rose-150 p-3.5 rounded-2xl flex items-center gap-2 text-rose-800 text-xs font-semibold">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{platError}</span>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-gray-650 block">Désignation du plat / boisson</label>
                   <input
@@ -4684,6 +5579,12 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
               </p>
 
               <form onSubmit={handleSaveEmployee} className="space-y-4">
+                {empError && (
+                  <div className="bg-rose-50 border border-rose-150 p-3.5 rounded-2xl flex items-center gap-2 text-rose-800 text-xs font-semibold">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{empError}</span>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-gray-650 block">Nom complet</label>
                   <input
@@ -5583,6 +6484,13 @@ export default function AdminInterface({ db, activeAdmin, onLogout }: AdminInter
           </div>
         )}
       </AnimatePresence>
+
+      {showHelpModal && (
+        <InteractiveHelpModal
+          type="admin"
+          onClose={() => setShowHelpModal(false)}
+        />
+      )}
     </div>
   );
 }

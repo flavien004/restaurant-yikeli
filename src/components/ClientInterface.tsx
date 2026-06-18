@@ -1,7 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useYikeliDb } from '../db';
 import { Plat, PaymentMethod, Commande } from '../types';
+import { CommandeValidationSchema } from '../validation';
 import Logo from './Logo';
+import QRScanner from './QRScanner';
+import InteractiveHelpModal from './InteractiveHelpModal';
 import {
   ShoppingBag,
   MessageSquare,
@@ -25,6 +28,7 @@ import {
   Truck,
   Smile,
   XCircle,
+  Camera,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -34,6 +38,58 @@ interface ClientInterfaceProps {
 
 export default function ClientInterface({ db }: ClientInterfaceProps) {
   // Client Form Details
+  const [clientFormError, setClientFormError] = useState<string | null>(null);
+  const [tableNumber, setTableNumber] = useState<number | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // Extract table number from text or URLs
+  const extractTableNumber = (scannedText: string): number | null => {
+    try {
+      const url = new URL(scannedText);
+      const tableParam = url.searchParams.get('table');
+      if (tableParam) {
+        const num = parseInt(tableParam, 10);
+        if (!isNaN(num) && num >= 1 && num <= 20) return num;
+      }
+    } catch (e) {
+      // Not a full URL - continue
+    }
+
+    const queryMatch = scannedText.match(/[?&]table=(\d+)/i) || scannedText.match(/^table=(\d+)/i);
+    if (queryMatch) {
+      const num = parseInt(queryMatch[1], 10);
+      if (!isNaN(num) && num >= 1 && num <= 20) return num;
+    }
+
+    const match = scannedText.match(/(?:table\s*[-_:#\s]*\s*|#\s*)?(\d+)/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num >= 1 && num <= 20) return num;
+    }
+
+    const rawNum = parseInt(scannedText, 10);
+    if (!isNaN(rawNum) && rawNum >= 1 && rawNum <= 20) return rawNum;
+
+    return null;
+  };
+
+  // URL scanning on mount for deep linking (e.g. table in query params)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tableParam = params.get('table');
+      if (tableParam) {
+        const num = parseInt(tableParam, 10);
+        if (!isNaN(num) && num >= 1 && num <= 20) {
+          setTableNumber(num);
+        }
+      }
+    } catch (err) {
+      console.error("Erreur d'extraction de table depuis l'URL:", err);
+    }
+  }, []);
+
   const [clientName, setClientName] = useState(() => {
     try {
       return localStorage.getItem('yikeli_client_name') || '';
@@ -221,22 +277,57 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
   // Submit web order
   const handleClientOrderSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (cartItems.length === 0 || !clientName.trim() || !clientPhone.trim()) return;
+    setClientFormError(null);
+
+    if (cartItems.length === 0) {
+      setClientFormError("Votre panier est vide.");
+      return;
+    }
+    if (!clientName.trim()) {
+      setClientFormError("Veuillez saisir votre nom.");
+      return;
+    }
+    if (!clientPhone.trim()) {
+      setClientFormError("Veuillez saisir votre numéro de téléphone.");
+      return;
+    }
 
     const itemsForSubmit = cartItems.map((item) => ({
       platId: item.plat.id,
       quantity: item.quantity,
     }));
 
-    // Register Order online with the desired payment specifier (without validating payment client-side)
+    try {
+      // Validate with Zod!
+      CommandeValidationSchema.parse({
+        clientName: clientName.trim(),
+        clientPhone: clientPhone.trim(),
+        items: itemsForSubmit,
+        type: tableNumber ? 'SUR_PLACE' : 'EN_LIGNE',
+        comment: orderComment.trim() || null,
+        paymentMethod: clientPaymentMethod || null,
+        tableNumber: tableNumber || null,
+      });
+    } catch (err: any) {
+      if (err.errors && Array.isArray(err.errors)) {
+        const firstErrorMsg = err.errors[0]?.message || "Données d'identification ou numéro de téléphone invalides.";
+        setClientFormError(`⚠️ ${firstErrorMsg}`);
+        return;
+      }
+      setClientFormError("⚠️ Les données saisies sont incorrectes.");
+      return;
+    }
+
+    // Register Order online or on-table with the desired payment specifier
     const order = db.submitCommande(
       clientName.trim(),
       clientPhone.trim(),
       itemsForSubmit,
-      'EN_LIGNE',
+      tableNumber ? 'SUR_PLACE' : 'EN_LIGNE',
       undefined,
       orderComment.trim(),
-      clientPaymentMethod
+      clientPaymentMethod,
+      tableNumber || undefined
     );
 
     // Save details to localStorage if selected, or clear otherwise
@@ -289,7 +380,9 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
       commentLine = `%0A⚠️ *Spécifications / Allergies :* ${order.comment}%0A`;
     }
 
-    const textMsg = `Bonjour *Restaurant Yikéli*,%0A%0AJe viens de valider une commande en ligne !%0A%0A*ID Commande:* ${order.id}%0A*Nom:* ${clientNameStr}%0A*Téléphone:* ${clientPhoneStr}%0A*Plats commandés:*%0A${dishesStr}${commentLine}%0A%0A*Total:* ${formatFCFA(order.total)}%0A*Mode de règlement :* ${paymentReport}%0A%0AMerci de préparer ma commande !`;
+    const typeDesc = order.type === 'SUR_PLACE' ? `SUR PLACE (Table ${order.tableNumber}) 🍽️` : 'EN LIGNE 🛵';
+
+    const textMsg = `Bonjour *Restaurant Yikéli*,%0A%0AJe viens de valider une commande *${typeDesc}* !%0A%0A*ID Commande:* ${order.id}%0A*Nom:* ${clientNameStr}%0A*Téléphone:* ${clientPhoneStr}%0A*Plats commandés:*%5A%0A${dishesStr}${commentLine}%0A%0A*Total:* ${formatFCFA(order.total)}%0A*Mode de règlement :* ${paymentReport}%0A%0AMerci de préparer ma commande !`;
     return `https://wa.me/${number.replace(/[^0-9]/g, '')}?text=${textMsg}`;
   };
 
@@ -306,13 +399,50 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
         <div className="flex justify-center relative z-10">
           <div className="flex flex-col items-center gap-2">
             <Logo size="md" className="bg-white p-2 rounded-2xl shadow-lg max-w-[125px]" />
-            <button
-              onClick={() => setShowTrackerModal(true)}
-              className="mt-1 bg-white/20 hover:bg-white/30 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-full border border-white/20 shadow-sm transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider"
-            >
-              <Receipt className="w-3.5 h-3.5 text-yellow-300" />
-              Suivre mes Commandes en Direct 🛵
-            </button>
+            <div className="flex flex-wrap justify-center gap-2 mt-1">
+              <button
+                type="button"
+                onClick={() => setShowTrackerModal(true)}
+                className="bg-white/20 hover:bg-white/35 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-full border border-white/20 shadow-sm transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider h-7"
+              >
+                <Receipt className="w-3.5 h-3.5 text-yellow-300" />
+                Suivre en Direct 🛵
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(true)}
+                className="bg-white/20 hover:bg-white/35 text-white font-extrabold text-[10px] px-3.5 py-1.5 rounded-full border border-white/20 shadow-sm transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider h-7"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-yellow-300" />
+                Aide ❓
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowScanner(true)}
+                className={`${
+                  tableNumber
+                    ? 'bg-emerald-500 text-white border-emerald-400'
+                    : 'bg-yellow-455 hover:bg-yellow-400 text-slate-950 border-yellow-350'
+                } font-extrabold text-[10px] px-3.5 py-1.5 rounded-full border shadow-md transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider h-7`}
+              >
+                <Camera className="w-3.5 h-3.5" />
+                {tableNumber ? `Table Active : N° ${tableNumber} 🍽️` : 'Scanner ma Table 📱'}
+              </button>
+
+              {tableNumber && (
+                <button
+                  type="button"
+                  onClick={() => setTableNumber(null)}
+                  className="bg-rose-600/90 hover:bg-rose-700 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-full border border-rose-500 shadow-sm transition flex items-center gap-1 active:scale-95 cursor-pointer uppercase tracking-wider h-7 animate-fadeIn"
+                  title="Effacer la table"
+                >
+                  <X className="w-3 h-3" />
+                  Effacer
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -598,6 +728,13 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
 
               <form onSubmit={handleClientOrderSubmit} className="space-y-4">
                 
+                {clientFormError && (
+                  <div className="bg-rose-50 border border-rose-150 p-3.5 rounded-2xl flex items-center gap-2 text-rose-800 text-xs font-semibold">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span>{clientFormError}</span>
+                  </div>
+                )}
+
                 {/* Cart Sums details summary */}
                 <div className="bg-slate-50 p-3.5 rounded-2xl border space-y-1.5 text-xs">
                   <div className="font-bold text-gray-750 pb-1 border-b border-gray-150 flex justify-between">
@@ -667,6 +804,73 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono font-bold"
                     />
                   </div>
+
+                  {/* Table Selection / Scanning Mode Card */}
+                  <div className="bg-orange-50/50 border border-orange-200/50 rounded-2xl p-4 space-y-3 shadow-sm">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-orange-950 block">Mode de Service</span>
+                    {tableNumber ? (
+                      <div className="flex items-center justify-between gap-2.5">
+                        <div className="flex items-center gap-2">
+                          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <div>
+                            <span className="text-xs font-bold text-gray-800 block">Sur Place — Table {tableNumber}</span>
+                            <span className="text-[9px] text-gray-500 leading-normal block">La commande sera servie à cette table</span>
+                          </div>
+                        </div>
+                        <div className="flex gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setShowScanner(true)}
+                            className="bg-white hover:bg-orange-100 text-[9px] font-bold text-orange-700 px-2 py-1.5 border border-orange-200 rounded-lg shadow-sm transition active:scale-95 cursor-pointer uppercase"
+                          >
+                            Scanner
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTableNumber(null)}
+                            className="bg-white hover:bg-rose-50 text-[9px] font-bold text-rose-600 px-2.5 py-1.5 border border-rose-200 rounded-lg transition active:scale-95 cursor-pointer"
+                            title="Manger à emporter"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1.5 text-xs text-gray-650 font-medium">
+                          <Truck className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                          <span>À emporter ou En livraison</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowScanner(true)}
+                            className="flex items-center justify-center gap-1.5 bg-orange-600 hover:bg-orange-750 text-white font-extrabold text-[10px] py-2 px-3 rounded-xl transition cursor-pointer active:scale-95 shadow-sm uppercase tracking-wider"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            Scanner Table
+                          </button>
+                          
+                          <select
+                            value={tableNumber || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTableNumber(val ? parseInt(val, 10) : null);
+                            }}
+                            className="bg-white border border-gray-250 text-gray-850 font-bold text-[10px] py-2 px-2.5 rounded-xl focus:outline-none focus:ring-1 focus:ring-orange-500 active:scale-95 transition"
+                          >
+                            <option value="">Table (Manuel)</option>
+                            {[...Array(20)].map((_, i) => (
+                              <option key={i + 1} value={i + 1}>
+                                Table {i + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-0.5">
                     <label className="text-[10px] font-bold text-gray-550 block">Spécifications ou Allergies (Optionnel)</label>
                     <textarea
@@ -1311,6 +1515,28 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
           </div>
         )}
       </AnimatePresence>
+
+      {showScanner && (
+        <QRScanner
+          onScanSuccess={(scannedText) => {
+            const tableNum = extractTableNumber(scannedText);
+            if (tableNum) {
+              setTableNumber(tableNum);
+              setShowScanner(false);
+              return true;
+            }
+            return false;
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {showHelpModal && (
+        <InteractiveHelpModal
+          type="client"
+          onClose={() => setShowHelpModal(false)}
+        />
+      )}
 
     </div>
   );

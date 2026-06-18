@@ -125,6 +125,8 @@ export interface Depense {
   description: string;
   amount: number;
   date: string; // YYYY-MM-DD
+  status?: 'PAYEE' | 'EN_ATTENTE' | 'REJETEE'; // Propriété d'autorisation/validation de dépense
+  submittedBy?: string; // Nom du caissier à l'origine de la saisie
 }
 
 export interface StockEntry {
