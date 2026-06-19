@@ -426,6 +426,31 @@ export function useYikeliDb() {
   const saveAndSetCommandes = (newCommandes: Commande[]) => {
     localStorage.setItem('yikeli_commandes', JSON.stringify(newCommandes));
     setCommandes(newCommandes);
+
+    // Synchronisation en arrière-plan vers le serveur Netlify (Supabase) pour les commandes ajoutées/modifiées
+    newCommandes.forEach(async (order) => {
+      let localPrev: Commande[] = [];
+      try {
+        const stored = localStorage.getItem('yikeli_commandes_backup_sync') || '[]';
+        localPrev = JSON.parse(stored);
+      } catch (e) {}
+
+      const existing = localPrev.find(c => c.id === order.id);
+      if (!existing || JSON.stringify(existing) !== JSON.stringify(order)) {
+        try {
+          await fetch('/.netlify/functions/saveOrder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(order),
+          });
+        } catch (err) {
+          console.warn('Erreur lors de la synchronisation de la commande avec Netlify:', err);
+        }
+      }
+    });
+    try {
+      localStorage.setItem('yikeli_commandes_backup_sync', JSON.stringify(newCommandes));
+    } catch (e) {}
   };
 
   const saveAndSetPaiements = (newPaiements: Paiement[]) => {
@@ -1647,6 +1672,54 @@ export function useYikeliDb() {
       return false;
     }
   };
+
+  // Synchronisation des commandes périodique pour recevoir les commandes en ligne et mises à jour
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const pullRemoteOrders = async () => {
+      try {
+        const response = await fetch('/.netlify/functions/getOrders');
+        if (!response.ok) return;
+        const remoteOrders = await response.json();
+        if (!Array.isArray(remoteOrders)) return;
+
+        setCommandes((prev) => {
+          let updated = false;
+          const next = [...prev];
+
+          remoteOrders.forEach((remote: Commande) => {
+            const index = next.findIndex((c) => c.id === remote.id);
+            if (index === -1) {
+              // Nouvelle commande provenant d'un client distant
+              next.push(remote);
+              updated = true;
+            } else if (JSON.stringify(next[index]) !== JSON.stringify(remote)) {
+              // Commande mise à jour (par exemple, le statut a changé)
+              next[index] = remote;
+              updated = true;
+            }
+          });
+
+          if (updated) {
+            localStorage.setItem('yikeli_commandes', JSON.stringify(next));
+            localStorage.setItem('yikeli_commandes_backup_sync', JSON.stringify(next));
+            return next;
+          }
+          return prev;
+        });
+      } catch (err) {
+        console.warn('Erreur lors de la récupération des commandes distantes:', err);
+      }
+    };
+
+    // Premier chargement immédiat
+    pullRemoteOrders();
+
+    // Polling régulier toutes les 10 secondes
+    const interval = setInterval(pullRemoteOrders, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   return {
     plats,
