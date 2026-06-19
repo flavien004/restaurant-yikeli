@@ -1183,13 +1183,10 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                               </>
                             ) : (
                               <>
-                                <option value="EN_COURS">💵 Payé non servi</option>
-                                <option value="ATTENTE_PAIEMENT">⏳ Attente Paiement</option>
-                                <option value="SERVIE">🍽️ Servie (Table)</option>
-                                <option value="PRET_A_LIVRER">📦 Prêt à livrer</option>
-                                <option value="EN_LIVRAISON">🛵 En Livraison</option>
-                                <option value="LIVREE">🎉 Livrée</option>
-                                <option value="PAYEE">✓ Payée / Clôturée</option>
+                                <option value="ATTENTE_PAIEMENT">⏳ En attente de paiement</option>
+                                <option value="EN_COURS">💵 Payé</option>
+                                <option value="PRET_A_LIVRER">📦 Servi en attente de livraison</option>
+                                <option value="LIVREE">✓ Livré et clôturée</option>
                               </>
                             )}
                           </select>

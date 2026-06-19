@@ -407,10 +407,23 @@ export function useYikeliDb() {
     }
   };
 
+  const syncMenuSettings = async (latestPlats: Plat[], latestMenu: string[]) => {
+    try {
+      await fetch('/.netlify/functions/saveMenu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plats: latestPlats, menuJour: latestMenu }),
+      });
+    } catch (err) {
+      console.warn('Erreur de synchro menu settings:', err);
+    }
+  };
+
   // Helper helper helpers
   const saveAndSetPlats = (newPlats: Plat[]) => {
     localStorage.setItem('yikeli_plats', JSON.stringify(newPlats));
     setPlats(newPlats);
+    syncMenuSettings(newPlats, menuJour);
   };
 
   const saveAndSetUsers = (newUsers: User[]) => {
@@ -435,13 +448,20 @@ export function useYikeliDb() {
         localPrev = JSON.parse(stored);
       } catch (e) {}
 
+      // Embed related payments for safe transaction syncing
+      const orderPayments = (paiements || []).filter(p => p.commandeId === order.id);
+      const synchronizedOrder = {
+        ...order,
+        payments: orderPayments
+      };
+
       const existing = localPrev.find(c => c.id === order.id);
-      if (!existing || JSON.stringify(existing) !== JSON.stringify(order)) {
+      if (!existing || JSON.stringify(existing) !== JSON.stringify(synchronizedOrder)) {
         try {
           await fetch('/.netlify/functions/saveOrder', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(order),
+            body: JSON.stringify(synchronizedOrder),
           });
         } catch (err) {
           console.warn('Erreur lors de la synchronisation de la commande avec Netlify:', err);
@@ -456,6 +476,27 @@ export function useYikeliDb() {
   const saveAndSetPaiements = (newPaiements: Paiement[]) => {
     localStorage.setItem('yikeli_paiements', JSON.stringify(newPaiements));
     setPaiements(newPaiements);
+
+    // Also trigger order sync when payments are registered so that they upload to Supabase instantly!
+    newPaiements.forEach(async (p) => {
+      const parentOrder = commandes.find((c) => c.id === p.commandeId);
+      if (parentOrder) {
+        const orderPayments = newPaiements.filter(x => x.commandeId === parentOrder.id);
+        const synchronizedOrder = {
+          ...parentOrder,
+          payments: orderPayments
+        };
+        try {
+          await fetch('/.netlify/functions/saveOrder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(synchronizedOrder),
+          });
+        } catch (err) {
+          console.warn('Erreur lors de la synchronisation de la commande avec Netlify après paiement:', err);
+        }
+      }
+    });
   };
 
   const saveAndSetDepenses = (newDepenses: Depense[]) => {
@@ -466,6 +507,7 @@ export function useYikeliDb() {
   const saveAndSetMenuJour = (newMenu: string[]) => {
     localStorage.setItem('yikeli_menujour', JSON.stringify(newMenu));
     setMenuJour(newMenu);
+    syncMenuSettings(plats, newMenu);
   };
 
   // --- CRUD Operations ---
@@ -801,15 +843,18 @@ export function useYikeliDb() {
     const newCmd: Commande = {
       id: commandeId,
       clientId: client.id,
+      clientName: client.name,
+      clientPhone: client.phone,
       userId: validated.employeeId ?? undefined,
       type: validated.type,
       tableNumber: validated.tableNumber ?? undefined,
       total,
-      status: 'EN_COURS',
+      status: validated.type === 'EN_LIGNE' ? 'ATTENTE_PAIEMENT' : 'EN_COURS',
       createdAt: new Date().toISOString(),
       items: finalizedItems,
       comment: validated.comment ?? '',
       paymentMethod: validated.paymentMethod ?? undefined,
+      payments: []
     };
 
     // Deduct stock for stocked items when ordering
@@ -1684,6 +1729,73 @@ export function useYikeliDb() {
         const remoteOrders = await response.json();
         if (!Array.isArray(remoteOrders)) return;
 
+        // 1. Process and synchronize embedded clients from remote orders (fixes "Client Externe" on caching cleared)
+        const remoteClients: Client[] = [];
+        remoteOrders.forEach((remote: Commande) => {
+          if (remote.clientId && remote.clientName && remote.clientPhone) {
+            remoteClients.push({
+              id: remote.clientId,
+              name: remote.clientName,
+              phone: remote.clientPhone,
+              totalSpent: 0,
+              createdAt: remote.createdAt || new Date().toISOString()
+            });
+          }
+        });
+
+        if (remoteClients.length > 0) {
+          setClients((localPrev) => {
+            let cUpdated = false;
+            const nextC = [...localPrev];
+            remoteClients.forEach((rc) => {
+              const index = nextC.findIndex((lc) => lc.id === rc.id);
+              if (index === -1) {
+                nextC.push(rc);
+                cUpdated = true;
+              } else if (nextC[index].name !== rc.name || nextC[index].phone !== rc.phone) {
+                nextC[index] = { ...nextC[index], name: rc.name, phone: rc.phone };
+                cUpdated = true;
+              }
+            });
+            if (cUpdated) {
+              localStorage.setItem('yikeli_clients', JSON.stringify(nextC));
+              return nextC;
+            }
+            return localPrev;
+          });
+        }
+
+        // 2. Process and synchronize embedded payments from remote orders (fixes payments confirmation)
+        const remotePayments: Paiement[] = [];
+        remoteOrders.forEach((remote: Commande) => {
+          if (Array.isArray(remote.payments)) {
+            remotePayments.push(...remote.payments);
+          }
+        });
+
+        if (remotePayments.length > 0) {
+          setPaiements((localPrev) => {
+            let pUpdated = false;
+            const nextP = [...localPrev];
+            remotePayments.forEach((rp) => {
+              const index = nextP.findIndex((lp) => lp.id === rp.id);
+              if (index === -1) {
+                nextP.push(rp);
+                pUpdated = true;
+              } else if (JSON.stringify(nextP[index]) !== JSON.stringify(rp)) {
+                nextP[index] = rp;
+                pUpdated = true;
+              }
+            });
+            if (pUpdated) {
+              localStorage.setItem('yikeli_paiements', JSON.stringify(nextP));
+              return nextP;
+            }
+            return localPrev;
+          });
+        }
+
+        // 3. Process and synchronize commands
         setCommandes((prev) => {
           let updated = false;
           const next = [...prev];
@@ -1711,13 +1823,39 @@ export function useYikeliDb() {
       } catch (err) {
         console.warn('Erreur lors de la récupération des commandes distantes:', err);
       }
+
+      // 4. Pull menu de jour / plat modifications (getMenu)
+      try {
+        const menuResponse = await fetch('/.netlify/functions/getMenu');
+        if (menuResponse.ok) {
+          const menuData = await menuResponse.json();
+          if (menuData && menuData.plats && menuData.menuJour) {
+            setPlats((localPlats) => {
+              if (JSON.stringify(localPlats) !== JSON.stringify(menuData.plats)) {
+                localStorage.setItem('yikeli_plats', JSON.stringify(menuData.plats));
+                return menuData.plats;
+              }
+              return localPlats;
+            });
+            setMenuJour((localMenu) => {
+              if (JSON.stringify(localMenu) !== JSON.stringify(menuData.menuJour)) {
+                localStorage.setItem('yikeli_menujour', JSON.stringify(menuData.menuJour));
+                return menuData.menuJour;
+              }
+              return localMenu;
+            });
+          }
+        }
+      } catch (menuErr) {
+        console.warn('Erreur lors de la récupération du menu distant:', menuErr);
+      }
     };
 
     // Premier chargement immédiat
     pullRemoteOrders();
 
-    // Polling régulier toutes les 10 secondes
-    const interval = setInterval(pullRemoteOrders, 10000);
+    // Polling régulier toutes les 3 secondes (3000 ms)
+    const interval = setInterval(pullRemoteOrders, 3000);
     return () => clearInterval(interval);
   }, []);
 

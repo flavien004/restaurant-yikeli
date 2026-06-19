@@ -91,6 +91,8 @@ export interface ClientFeedback {
 export interface Commande {
   id: string;
   clientId: string; // linked to a client
+  clientName?: string; // Cache or sync client name for online tracking
+  clientPhone?: string; // Cache or sync client phone for online tracking
   userId?: string;  // if logged-in employee took it on-site
   type: CommandeType;
   tableNumber?: number; // Numéro de table pour SUR_PLACE (1 à 20)
@@ -104,6 +106,7 @@ export interface Commande {
   paymentMethod?: PaymentMethod; // Mode de paiement spécifié
   takenChargeAt?: string; // Date/heure de la prise en charge par le caissier
   feedback?: ClientFeedback; // Évaluation client
+  payments?: Paiement[]; // Embedded payment records synchronized
 }
 
 export type PaymentMethod = string;

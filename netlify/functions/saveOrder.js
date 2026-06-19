@@ -47,13 +47,22 @@ export async function handler(event, context) {
     const record = {
       id: order.id,
       client_id: order.clientId || "",
+      client_name: order.clientName || null,
+      client_phone: order.clientPhone || null,
       items: order.items,
       total: Number(order.total),
       type: order.type,
       status: order.status,
       created_at: order.createdAt,
       comment: order.comment || null,
-      table_number: order.tableNumber || null
+      table_number: order.tableNumber || null,
+      cancel_reason: order.cancelReason || null,
+      refusal_reason: order.refusalReason || null,
+      payment_method: order.paymentMethod || null,
+      taken_charge_at: order.takenChargeAt || null,
+      feedback: order.feedback || null,
+      user_id: order.userId || null,
+      payments: order.payments || null
     };
 
     const response = await fetch(`${supabaseUrl}/rest/v1/yikeli_orders`, {

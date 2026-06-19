@@ -51,13 +51,22 @@ export async function handler(event, context) {
     const formattedOrders = data.map(order => ({
       id: order.id,
       clientId: order.client_id || "",
+      clientName: order.client_name || "",
+      clientPhone: order.client_phone || "",
       items: order.items,
       total: Number(order.total),
       type: order.type,
       status: order.status,
       createdAt: order.created_at,
       comment: order.comment || "",
-      tableNumber: order.table_number || undefined
+      tableNumber: order.table_number || undefined,
+      cancelReason: order.cancel_reason || "",
+      refusalReason: order.refusal_reason || "",
+      paymentMethod: order.payment_method || "",
+      takenChargeAt: order.taken_charge_at || "",
+      feedback: order.feedback || undefined,
+      userId: order.user_id || undefined,
+      payments: order.payments || undefined
     }));
 
     return {
