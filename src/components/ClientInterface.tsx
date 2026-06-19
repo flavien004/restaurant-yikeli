@@ -32,6 +32,20 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+async function sendOrder(order: Commande) {
+  try {
+    const response = await fetch("/.netlify/functions/saveOrder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(order),
+    });
+    const result = await response.json();
+    console.log("Result from Netlify saveOrder function:", result);
+  } catch (error) {
+    console.error("Error submitting order to Netlify function:", error);
+  }
+}
+
 interface ClientInterfaceProps {
   db: ReturnType<typeof useYikeliDb>;
 }
@@ -329,6 +343,9 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
       clientPaymentMethod,
       tableNumber || undefined
     );
+
+    // Call Netlify function to persist order on the server-side
+    sendOrder(order);
 
     // Save details to localStorage if selected, or clear otherwise
     if (saveDetails) {

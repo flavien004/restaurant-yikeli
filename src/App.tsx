@@ -56,7 +56,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Logo size="sm" width={24} height={24} className="bg-white rounded-full p-0.5 shadow-sm" />
                 <span className="font-extrabold uppercase tracking-widest text-orange-450 font-mono text-[11px]">
-                  Restaurant Yikéli • Simulateur Actif
+                  Restaurant Yikéli 
                 </span>
               </div>
             </div>
