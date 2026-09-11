@@ -157,6 +157,26 @@ export const StockEntryValidationSchema = z.object({
 });
 
 // ----------------------------------------------------
+// 8. Restaurant Tenant Validation Schema (SaaS)
+// ----------------------------------------------------
+export const RestaurantTenantValidationSchema = z.object({
+  name: safeString(2, 100),
+  logo: z.string().transform(sanitizeString).optional().nullable(),
+  slogan: z.string().transform(sanitizeString).optional().nullable(),
+  address: safeString(3, 200),
+  managerName: safeString(2, 80),
+  managerPhone: phonePattern,
+  managerEmail: z.string().email('Email du gérant invalide.').transform(sanitizeString),
+  contacts: safeString(3, 100),
+  whatsapp: phonePattern,
+  subscriptionPlan: z.enum(['STANDARD_MENSUEL', 'STANDARD_ANNUEL', 'PREMIUM_MENSUEL', 'PREMIUM_ANNUEL']),
+  subscriptionStartDate: z.string().transform(sanitizeString),
+  subscriptionEndDate: z.string().transform(sanitizeString),
+  adminUsername: safeString(3, 40),
+  adminPassword: safeString(4, 40),
+});
+
+// ----------------------------------------------------
 // Helper format error extractor
 // ----------------------------------------------------
 export const formatZodError = (err: z.ZodError): Record<string, string> => {

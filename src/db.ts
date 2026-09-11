@@ -1,5 +1,28 @@
-import { useState, useEffect } from 'react';
-import { Plat, User, Client, Commande, Paiement, Depense, CommandeItem, PaymentMethod, CommandeStatus, DepenseCategory, PlatCategory, StockEntry, Supplier } from './types';
+import { useState, useEffect, useMemo } from 'react';
+import { Plat, User, Client, Commande, Paiement, Depense, CommandeItem, PaymentMethod, CommandeStatus, DepenseCategory, PlatCategory, StockEntry, Supplier, RestaurantTenant, SaaSPricingConfig, SaaSPlanKey } from './types';
+import {
+  getSupabaseClient,
+  getSupabaseConfig,
+  syncOrderToSupabase,
+  fetchAllOrdersFromSupabase,
+  syncSettingsToSupabase,
+  fetchSettingsFromSupabase,
+  syncPaiementToSupabase,
+  fetchAllPaiementsFromSupabase,
+  syncDepenseToSupabase,
+  fetchAllDepensesFromSupabase,
+  syncClientToSupabase,
+  fetchAllClientsFromSupabase,
+  syncStockEntryToSupabase,
+  fetchAllStockEntriesFromSupabase,
+  syncSupplierToSupabase,
+  fetchAllSuppliersFromSupabase,
+  syncRestaurantToSupabase,
+  fetchAllRestaurantsFromSupabase,
+  syncUserToSupabase,
+  fetchAllUsersFromSupabase,
+  formatSupabaseRecordToCommande,
+} from './lib/supabase';
 import {
   CommandeValidationSchema,
   FeedbackValidationSchema,
@@ -18,6 +41,8 @@ import {
   INITIAL_COMMANDES,
   INITIAL_PAIEMENTS,
   INITIAL_STOCK_ENTRIES,
+  INITIAL_SAAS_PRICING,
+  INITIAL_RESTAURANTS,
 } from './mockData';
 
 const generateUUID = () => {
@@ -78,6 +103,26 @@ export function useYikeliDb() {
   const [depenseCategories, setDepenseCategories] = useState<string[]>([]);
   const [stockEntries, setStockEntries] = useState<StockEntry[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [restaurants, setRestaurants] = useState<RestaurantTenant[]>([]);
+  const [saasPricing, setSaasPricing] = useState<SaaSPricingConfig>(INITIAL_SAAS_PRICING);
+  const [activeRestaurantId, setActiveRestaurantIdState] = useState<string>('rest-1');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [supabaseStatus, setSupabaseStatus] = useState<'CONNECTED' | 'CONNECTING' | 'DISCONNECTED' | 'NOT_CONFIGURED' | 'ERROR'>('CONNECTING');
+  const [supabaseRealtimeActive, setSupabaseRealtimeActive] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [configVersion, setConfigVersion] = useState(0);
+
+  const broadcastSync = () => {
+    try {
+      if (typeof window !== 'undefined') {
+        const channel = new BroadcastChannel('yikeli_sync_channel');
+        channel.postMessage('sync');
+        channel.close();
+      }
+    } catch (err) {
+      // Ignored for restricted environments
+    }
+  };
 
   // Statut Connexion Réseau Local / Internet
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' ? !navigator.onLine : false);
@@ -107,21 +152,24 @@ export function useYikeliDb() {
   }, [plats, users, clients, commandes, paiements, depenses, menuJour, stockEntries]);
 
   useEffect(() => {
-    // Force deletion of sales / orders / payments / expenses / clients / stock data once to meet user requirement
-    const hasClearedSales = localStorage.getItem('yikeli_sales_cleared_v1');
+    // Force deletion of sales / orders / payments / expenses / clients / suppliers / stock data once to meet user requirement
+    const hasClearedSales = localStorage.getItem('yikeli_sales_cleared_v2');
     if (!hasClearedSales) {
       localStorage.removeItem('yikeli_commandes');
       localStorage.removeItem('yikeli_paiements');
       localStorage.removeItem('yikeli_depenses');
       localStorage.removeItem('yikeli_clients');
       localStorage.removeItem('yikeli_stock_entries');
+      localStorage.removeItem('yikeli_suppliers');
       localStorage.removeItem('yikeli_commandes_backup');
       localStorage.removeItem('yikeli_paiements_backup');
       localStorage.removeItem('yikeli_depenses_backup');
       localStorage.removeItem('yikeli_clients_backup');
+      localStorage.removeItem('yikeli_suppliers_backup');
       localStorage.removeItem('yikeli_stock_entries_backup');
+      localStorage.removeItem('yikeli_commandes_backup_sync');
       localStorage.removeItem('yikeli_full_backup_system');
-      localStorage.setItem('yikeli_sales_cleared_v1', 'true');
+      localStorage.setItem('yikeli_sales_cleared_v2', 'true');
       
       // Force empty indexedDB tables too
       openIndexedDB().then((idb) => {
@@ -133,6 +181,7 @@ export function useYikeliDb() {
           store.delete('yikeli_depenses');
           store.delete('yikeli_clients');
           store.delete('yikeli_stock_entries');
+          store.delete('yikeli_suppliers');
         } catch (e) {
           console.warn(e);
         }
@@ -152,8 +201,26 @@ export function useYikeliDb() {
     const storedUsers = localStorage.getItem('yikeli_users');
     if (storedUsers) {
       try {
-        const parsed: User[] = JSON.parse(storedUsers);
+        let parsed: User[] = JSON.parse(storedUsers);
         let migrated = false;
+
+        // Guarantee that SUPER_ADMIN user exists
+        if (!parsed.some((u) => u.role === 'SUPER_ADMIN' || u.id === 'u0')) {
+          const superAdminSeed = INITIAL_USERS.find((su) => su.role === 'SUPER_ADMIN') || {
+            id: 'u0',
+            name: 'Super Admin RestoChain',
+            phone: '+225 00 00 00 00 00',
+            email: 'saas@restochain.ci',
+            role: 'SUPER_ADMIN',
+            isActive: true,
+            createdAt: '2026-01-01T00:00:00Z',
+            username: 'saas',
+            password: 'saas'
+          };
+          parsed = [superAdminSeed, ...parsed];
+          migrated = true;
+        }
+
         const updated = parsed.map((u) => {
           const seed = INITIAL_USERS.find((su) => su.id === u.id);
           const nextUser = { ...u };
@@ -163,6 +230,11 @@ export function useYikeliDb() {
           }
           if (!nextUser.password) {
             nextUser.password = seed?.password || '12345';
+            migrated = true;
+          }
+          if (nextUser.role === 'SUPER_ADMIN' && (nextUser.email === 'saas@yikeli.ci' || nextUser.name === 'Super Admin SaaS')) {
+            nextUser.email = 'saas@restochain.ci';
+            nextUser.name = 'Super Admin RestoChain';
             migrated = true;
           }
           return nextUser;
@@ -268,15 +340,47 @@ export function useYikeliDb() {
     // 10. Suppliers (Fournisseurs)
     const storedSuppliers = localStorage.getItem('yikeli_suppliers');
     if (storedSuppliers) {
-      setSuppliers(JSON.parse(storedSuppliers));
+      try {
+        setSuppliers(JSON.parse(storedSuppliers));
+      } catch (e) {
+        setSuppliers([]);
+      }
     } else {
-      const initialSuppliers: Supplier[] = [
-        { id: 'sup-1', name: 'Marché de Cocody - Grossiste Viande', phone: '+225 07 12 34 56 78', address: 'Cocody, Abidjan', createdAt: '2026-05-10T11:00:00Z' },
-        { id: 'sup-2', name: 'Alimentation Générale Djorogobité', phone: '+225 05 88 22 34 12', address: 'Abatta Carrefour Sodepalm', createdAt: '2026-05-11T14:30:00Z' },
-        { id: 'sup-3', name: 'Sococe Abidjan - Boissons S.A.', phone: '+225 01 01 56 78 99', address: 'Boulevard de Marseille', createdAt: '2026-05-11T16:00:00Z' }
-      ];
+      const initialSuppliers: Supplier[] = [];
       localStorage.setItem('yikeli_suppliers', JSON.stringify(initialSuppliers));
       setSuppliers(initialSuppliers);
+    }
+
+    // 11. SaaS Restaurants
+    const storedRestaurants = localStorage.getItem('yikeli_restaurants');
+    if (storedRestaurants) {
+      try {
+        setRestaurants(JSON.parse(storedRestaurants));
+      } catch (e) {
+        setRestaurants(INITIAL_RESTAURANTS);
+      }
+    } else {
+      localStorage.setItem('yikeli_restaurants', JSON.stringify(INITIAL_RESTAURANTS));
+      setRestaurants(INITIAL_RESTAURANTS);
+    }
+
+    // 12. SaaS Pricing
+    const storedPricing = localStorage.getItem('yikeli_saas_pricing');
+    if (storedPricing) {
+      try {
+        setSaasPricing(JSON.parse(storedPricing));
+      } catch (e) {
+        setSaasPricing(INITIAL_SAAS_PRICING);
+      }
+    } else {
+      localStorage.setItem('yikeli_saas_pricing', JSON.stringify(INITIAL_SAAS_PRICING));
+      setSaasPricing(INITIAL_SAAS_PRICING);
+    }
+
+    // 13. Active Restaurant ID
+    const storedActiveRestId = localStorage.getItem('yikeli_active_restaurant_id');
+    if (storedActiveRestId) {
+      setActiveRestaurantIdState(storedActiveRestId);
     }
   }, []);
 
@@ -310,6 +414,12 @@ export function useYikeliDb() {
           setStockEntries(parsed);
         } else if (e.key === 'yikeli_suppliers') {
           setSuppliers(parsed);
+        } else if (e.key === 'yikeli_restaurants') {
+          setRestaurants(parsed);
+        } else if (e.key === 'yikeli_saas_pricing') {
+          setSaasPricing(parsed);
+        } else if (e.key === 'yikeli_active_restaurant_id') {
+          setActiveRestaurantIdState(e.newValue);
         }
       } catch (err) {
         console.error('Error synchronizing cross-tab data:', err);
@@ -324,26 +434,35 @@ export function useYikeliDb() {
   const saveAndSetPlatCategories = (newCats: string[]) => {
     localStorage.setItem('yikeli_plat_categories', JSON.stringify(newCats));
     setPlatCategories(newCats);
+    syncSettingsToSupabase({ platCategories: newCats }, activeRestaurantId).catch(() => {});
   };
 
   const saveAndSetPaymentMethods = (newMethods: string[]) => {
     localStorage.setItem('yikeli_payment_methods', JSON.stringify(newMethods));
     setPaymentMethods(newMethods);
+    syncSettingsToSupabase({ paymentMethods: newMethods }, activeRestaurantId).catch(() => {});
   };
 
   const saveAndSetDepenseCategories = (newCats: string[]) => {
     localStorage.setItem('yikeli_depense_categories', JSON.stringify(newCats));
     setDepenseCategories(newCats);
+    syncSettingsToSupabase({ depenseCategories: newCats }, activeRestaurantId).catch(() => {});
   };
 
   const saveAndSetStockEntries = (newEntries: StockEntry[]) => {
     localStorage.setItem('yikeli_stock_entries', JSON.stringify(newEntries));
     setStockEntries(newEntries);
+    newEntries.forEach((se) => {
+      syncStockEntryToSupabase(se, activeRestaurantId).catch(() => {});
+    });
   };
 
   const saveAndSetSuppliers = (newSups: Supplier[]) => {
     localStorage.setItem('yikeli_suppliers', JSON.stringify(newSups));
     setSuppliers(newSups);
+    newSups.forEach((sup) => {
+      syncSupplierToSupabase(sup, activeRestaurantId).catch(() => {});
+    });
   };
 
   const createSupplier = (name: string, phone: string, email?: string, address?: string) => {
@@ -408,14 +527,28 @@ export function useYikeliDb() {
   };
 
   const syncMenuSettings = async (latestPlats: Plat[], latestMenu: string[]) => {
+    // 1. Direct Supabase sync
+    syncSettingsToSupabase({
+      plats: latestPlats,
+      menuJour: latestMenu,
+      platCategories,
+      paymentMethods,
+      depenseCategories,
+      saasPricing
+    }, activeRestaurantId).catch((err) => {
+      console.warn('Sync settings Supabase warning:', err);
+    });
+
+    // 2. Netlify function fallback
     try {
       await fetch('/.netlify/functions/saveMenu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plats: latestPlats, menuJour: latestMenu }),
       });
+      broadcastSync();
     } catch (err) {
-      console.warn('Erreur de synchro menu settings:', err);
+      // Quiet
     }
   };
 
@@ -429,18 +562,24 @@ export function useYikeliDb() {
   const saveAndSetUsers = (newUsers: User[]) => {
     localStorage.setItem('yikeli_users', JSON.stringify(newUsers));
     setUsers(newUsers);
+    newUsers.forEach((u) => {
+      syncUserToSupabase(u, activeRestaurantId).catch(() => {});
+    });
   };
 
   const saveAndSetClients = (newClients: Client[]) => {
     localStorage.setItem('yikeli_clients', JSON.stringify(newClients));
     setClients(newClients);
+    newClients.forEach((c) => {
+      syncClientToSupabase(c, activeRestaurantId).catch(() => {});
+    });
   };
 
   const saveAndSetCommandes = (newCommandes: Commande[]) => {
     localStorage.setItem('yikeli_commandes', JSON.stringify(newCommandes));
     setCommandes(newCommandes);
 
-    // Synchronisation en arrière-plan vers le serveur Netlify (Supabase) pour les commandes ajoutées/modifiées
+    // Synchronisation vers Supabase et Netlify
     newCommandes.forEach(async (order) => {
       let localPrev: Commande[] = [];
       try {
@@ -457,6 +596,12 @@ export function useYikeliDb() {
 
       const existing = localPrev.find(c => c.id === order.id);
       if (!existing || JSON.stringify(existing) !== JSON.stringify(synchronizedOrder)) {
+        // Envoi direct à Supabase en priorité pour réactivité temps réel
+        syncOrderToSupabase(synchronizedOrder, activeRestaurantId).catch((err) => {
+          console.warn('Sync order Supabase warning:', err);
+        });
+
+        // Envoi fallback Netlify function
         try {
           await fetch('/.netlify/functions/saveOrder', {
             method: 'POST',
@@ -464,21 +609,25 @@ export function useYikeliDb() {
             body: JSON.stringify(synchronizedOrder),
           });
         } catch (err) {
-          console.warn('Erreur lors de la synchronisation de la commande avec Netlify:', err);
+          // Quiet
         }
       }
     });
+
     try {
       localStorage.setItem('yikeli_commandes_backup_sync', JSON.stringify(newCommandes));
     } catch (e) {}
+    broadcastSync();
   };
 
   const saveAndSetPaiements = (newPaiements: Paiement[]) => {
     localStorage.setItem('yikeli_paiements', JSON.stringify(newPaiements));
     setPaiements(newPaiements);
 
-    // Also trigger order sync when payments are registered so that they upload to Supabase instantly!
     newPaiements.forEach(async (p) => {
+      // Direct payment sync to Supabase
+      syncPaiementToSupabase(p, activeRestaurantId).catch(() => {});
+
       const parentOrder = commandes.find((c) => c.id === p.commandeId);
       if (parentOrder) {
         const orderPayments = newPaiements.filter(x => x.commandeId === parentOrder.id);
@@ -486,6 +635,7 @@ export function useYikeliDb() {
           ...parentOrder,
           payments: orderPayments
         };
+        syncOrderToSupabase(synchronizedOrder, activeRestaurantId).catch(() => {});
         try {
           await fetch('/.netlify/functions/saveOrder', {
             method: 'POST',
@@ -493,15 +643,19 @@ export function useYikeliDb() {
             body: JSON.stringify(synchronizedOrder),
           });
         } catch (err) {
-          console.warn('Erreur lors de la synchronisation de la commande avec Netlify après paiement:', err);
+          // Quiet
         }
       }
     });
+    broadcastSync();
   };
 
   const saveAndSetDepenses = (newDepenses: Depense[]) => {
     localStorage.setItem('yikeli_depenses', JSON.stringify(newDepenses));
     setDepenses(newDepenses);
+    newDepenses.forEach((dep) => {
+      syncDepenseToSupabase(dep, activeRestaurantId).catch(() => {});
+    });
   };
 
   const saveAndSetMenuJour = (newMenu: string[]) => {
@@ -843,8 +997,8 @@ export function useYikeliDb() {
     const newCmd: Commande = {
       id: commandeId,
       clientId: client.id,
-      clientName: client.name,
-      clientPhone: client.phone,
+      clientName: validated.clientName || client.name,
+      clientPhone: validated.clientPhone || client.phone,
       userId: validated.employeeId ?? undefined,
       type: validated.type,
       tableNumber: validated.tableNumber ?? undefined,
@@ -1156,7 +1310,7 @@ export function useYikeliDb() {
       newDepenses.push({
         id: `dep-hist-${m.prefix}-loyer`,
         category: 'Loyer',
-        description: `Loyer local Yikéli - Mois ${monthStr}`,
+        description: `Loyer local - Mois ${monthStr}`,
         amount: 150000,
         date: `2026-${monthStr}-01`
       });
@@ -1615,11 +1769,7 @@ export function useYikeliDb() {
     const initialPlatCats = ['PLATS_IVOIRIENS', 'BOISSONS'];
     const initialPayMethods = ['ESPECE', 'WAVE', 'ORANGE_MONEY', 'DJAMO'];
     const initialDepenseCats = ['Loyer', 'Factures', 'Provisions', 'Transport', 'Livraison', 'Taxes', 'Salaires', 'Réparations', 'Autre'];
-    const initialSuppliers: Supplier[] = [
-      { id: 'sup-1', name: 'Marché de Cocody - Grossiste Viande', phone: '+225 07 12 34 56 78', address: 'Cocody, Abidjan', createdAt: '2026-05-10T11:00:00Z' },
-      { id: 'sup-2', name: 'Alimentation Générale Djorogobité', phone: '+225 05 88 22 34 12', address: 'Abatta Carrefour Sodepalm', createdAt: '2026-05-11T14:30:00Z' },
-      { id: 'sup-3', name: 'Sococe Abidjan - Boissons S.A.', phone: '+225 01 01 56 78 99', address: 'Boulevard de Marseille', createdAt: '2026-05-11T16:00:00Z' }
-    ];
+    const initialSuppliers: Supplier[] = [];
     
     setPlatCategories(initialPlatCats);
     setPaymentMethods(initialPayMethods);
@@ -1718,72 +1868,228 @@ export function useYikeliDb() {
     }
   };
 
-  // Synchronisation des commandes périodique pour recevoir les commandes en ligne et mises à jour
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
+  // Transfert manuel de toutes les données locales vers Supabase
+  const pushAllLocalDataToSupabase = async (): Promise<{ success: boolean; message: string }> => {
+    const client = getSupabaseClient();
+    if (!client) {
+      return {
+        success: false,
+        message: "Supabase n'est pas configuré. Veuillez renseigner l'URL et la clé d'API dans la fenêtre de configuration.",
+      };
+    }
 
-    const pullRemoteOrders = async () => {
+    try {
+      let ordersCount = 0;
+
+      // 1. Paramètres généraux, Plats & Menus
+      await syncSettingsToSupabase({
+        plats,
+        menuJour,
+        platCategories,
+        paymentMethods,
+        depenseCategories,
+        saasPricing,
+      }, activeRestaurantId);
+
+      // 2. Commandes avec paiements intégrés
+      for (const cmd of commandes) {
+        const cmdPayments = (paiements || []).filter((p) => p.commandeId === cmd.id);
+        await syncOrderToSupabase({ ...cmd, payments: cmdPayments }, activeRestaurantId);
+        ordersCount++;
+      }
+
+      // 3. Paiements unitaires
+      for (const p of paiements) {
+        await syncPaiementToSupabase(p, activeRestaurantId);
+      }
+
+      // 4. Dépenses
+      for (const d of depenses) {
+        await syncDepenseToSupabase(d, activeRestaurantId);
+      }
+
+      // 5. Clients
+      for (const c of clients) {
+        await syncClientToSupabase(c, activeRestaurantId);
+      }
+
+      // 6. Stocks
+      for (const se of stockEntries) {
+        await syncStockEntryToSupabase(se, activeRestaurantId);
+      }
+
+      // 7. Fournisseurs
+      for (const sup of suppliers) {
+        await syncSupplierToSupabase(sup, activeRestaurantId);
+      }
+
+      // 8. Restaurants
+      for (const r of restaurants) {
+        await syncRestaurantToSupabase(r);
+      }
+
+      // 9. Utilisateurs
+      for (const u of users) {
+        await syncUserToSupabase(u, activeRestaurantId);
+      }
+
+      setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+      setSupabaseStatus('CONNECTED');
+
+      return {
+        success: true,
+        message: `Transfert réussi ! Vos ${ordersCount} commandes, ${plats.length} plats et l'ensemble de vos données ont été copiés dans Supabase avec succès.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Erreur de transfert : ${err?.message || err}`,
+      };
+    }
+  };
+
+  // function to fetch remote data from Supabase (and Netlify fallback)
+  const pullRemoteOrders = async () => {
+    setIsSyncing(true);
+
+    // 1. Synchronisation primaire via le client Supabase Cloud
+    const client = getSupabaseClient();
+    if (client) {
       try {
-        const response = await fetch('/.netlify/functions/getOrders');
-        if (!response.ok) return;
-        const remoteOrders = await response.json();
-        if (!Array.isArray(remoteOrders)) return;
-
-        // 1. Process and synchronize embedded clients from remote orders (fixes "Client Externe" on caching cleared)
-        const remoteClients: Client[] = [];
-        remoteOrders.forEach((remote: Commande) => {
-          if (remote.clientId && remote.clientName && remote.clientPhone) {
-            remoteClients.push({
-              id: remote.clientId,
-              name: remote.clientName,
-              phone: remote.clientPhone,
-              totalSpent: 0,
-              createdAt: remote.createdAt || new Date().toISOString()
-            });
-          }
-        });
-
-        if (remoteClients.length > 0) {
-          setClients((localPrev) => {
-            let cUpdated = false;
-            const nextC = [...localPrev];
-            remoteClients.forEach((rc) => {
-              const index = nextC.findIndex((lc) => lc.id === rc.id);
-              if (index === -1) {
-                nextC.push(rc);
-                cUpdated = true;
-              } else if (nextC[index].name !== rc.name || nextC[index].phone !== rc.phone) {
-                nextC[index] = { ...nextC[index], name: rc.name, phone: rc.phone };
-                cUpdated = true;
+        // A. Commandes Supabase
+        const remoteOrders = await fetchAllOrdersFromSupabase(activeRestaurantId);
+        if (Array.isArray(remoteOrders) && remoteOrders.length > 0) {
+          setCommandes((prev) => {
+            let updated = false;
+            const next = [...prev];
+            remoteOrders.forEach((remote) => {
+              const idx = next.findIndex((c) => c.id === remote.id);
+              if (idx === -1) {
+                next.push(remote);
+                updated = true;
+              } else if (JSON.stringify(next[idx]) !== JSON.stringify(remote)) {
+                next[idx] = remote;
+                updated = true;
               }
             });
-            if (cUpdated) {
-              localStorage.setItem('yikeli_clients', JSON.stringify(nextC));
-              return nextC;
+            if (updated) {
+              localStorage.setItem('yikeli_commandes', JSON.stringify(next));
+              return next;
             }
-            return localPrev;
+            return prev;
           });
+
+          // Extraire et synchroniser les clients issus des commandes
+          const remoteClients: Client[] = [];
+          remoteOrders.forEach((remote) => {
+            if (remote.clientId && remote.clientName && remote.clientPhone) {
+              remoteClients.push({
+                id: remote.clientId,
+                name: remote.clientName,
+                phone: remote.clientPhone,
+                totalSpent: 0,
+                createdAt: remote.createdAt || new Date().toISOString(),
+              });
+            }
+          });
+
+          if (remoteClients.length > 0) {
+            setClients((localPrev) => {
+              let cUpdated = false;
+              const nextC = [...localPrev];
+              remoteClients.forEach((rc) => {
+                const index = nextC.findIndex((lc) => lc.id === rc.id);
+                if (index === -1) {
+                  nextC.push(rc);
+                  cUpdated = true;
+                } else if (nextC[index].name !== rc.name || nextC[index].phone !== rc.phone) {
+                  nextC[index] = { ...nextC[index], name: rc.name, phone: rc.phone };
+                  cUpdated = true;
+                }
+              });
+              if (cUpdated) {
+                localStorage.setItem('yikeli_clients', JSON.stringify(nextC));
+                return nextC;
+              }
+              return localPrev;
+            });
+          }
+
+          // Extraire et synchroniser les paiements
+          const remotePayments: Paiement[] = [];
+          remoteOrders.forEach((remote) => {
+            if (Array.isArray(remote.payments)) {
+              remotePayments.push(...remote.payments);
+            }
+          });
+
+          if (remotePayments.length > 0) {
+            setPaiements((localPrev) => {
+              let pUpdated = false;
+              const nextP = [...localPrev];
+              remotePayments.forEach((rp) => {
+                const index = nextP.findIndex((lp) => lp.id === rp.id);
+                if (index === -1) {
+                  nextP.push(rp);
+                  pUpdated = true;
+                } else if (JSON.stringify(nextP[index]) !== JSON.stringify(rp)) {
+                  nextP[index] = rp;
+                  pUpdated = true;
+                }
+              });
+              if (pUpdated) {
+                localStorage.setItem('yikeli_paiements', JSON.stringify(nextP));
+                return nextP;
+              }
+              return localPrev;
+            });
+          }
         }
 
-        // 2. Process and synchronize embedded payments from remote orders (fixes payments confirmation)
-        const remotePayments: Paiement[] = [];
-        remoteOrders.forEach((remote: Commande) => {
-          if (Array.isArray(remote.payments)) {
-            remotePayments.push(...remote.payments);
+        // B. Paramètres Supabase (Menu de jour, Plats, Catégories)
+        const remoteSettings = await fetchSettingsFromSupabase(activeRestaurantId);
+        if (remoteSettings) {
+          if (Array.isArray(remoteSettings.plats) && remoteSettings.plats.length > 0) {
+            setPlats((localPlats) => {
+              if (JSON.stringify(localPlats) !== JSON.stringify(remoteSettings.plats)) {
+                localStorage.setItem('yikeli_plats', JSON.stringify(remoteSettings.plats));
+                return remoteSettings.plats!;
+              }
+              return localPlats;
+            });
           }
-        });
+          if (Array.isArray(remoteSettings.menuJour)) {
+            setMenuJour((localMenu) => {
+              if (JSON.stringify(localMenu) !== JSON.stringify(remoteSettings.menuJour)) {
+                localStorage.setItem('yikeli_menujour', JSON.stringify(remoteSettings.menuJour));
+                return remoteSettings.menuJour!;
+              }
+              return localMenu;
+            });
+          }
+          if (Array.isArray(remoteSettings.platCategories) && remoteSettings.platCategories.length > 0) {
+            setPlatCategories(remoteSettings.platCategories);
+          }
+          if (Array.isArray(remoteSettings.paymentMethods) && remoteSettings.paymentMethods.length > 0) {
+            setPaymentMethods(remoteSettings.paymentMethods);
+          }
+          if (Array.isArray(remoteSettings.depenseCategories) && remoteSettings.depenseCategories.length > 0) {
+            setDepenseCategories(remoteSettings.depenseCategories);
+          }
+          if (remoteSettings.saasPricing) {
+            setSaasPricing(remoteSettings.saasPricing);
+          }
+        }
 
-        if (remotePayments.length > 0) {
-          setPaiements((localPrev) => {
+        // C. Paiements Supabase
+        const directPayments = await fetchAllPaiementsFromSupabase(activeRestaurantId);
+        if (Array.isArray(directPayments) && directPayments.length > 0) {
+          setPaiements((prev) => {
             let pUpdated = false;
-            const nextP = [...localPrev];
-            remotePayments.forEach((rp) => {
-              const index = nextP.findIndex((lp) => lp.id === rp.id);
-              if (index === -1) {
-                nextP.push(rp);
-                pUpdated = true;
-              } else if (JSON.stringify(nextP[index]) !== JSON.stringify(rp)) {
-                nextP[index] = rp;
+            const nextP = [...prev];
+            directPayments.forEach((dp) => {
+              if (!nextP.some((p) => p.id === dp.id)) {
+                nextP.push(dp);
                 pUpdated = true;
               }
             });
@@ -1791,73 +2097,408 @@ export function useYikeliDb() {
               localStorage.setItem('yikeli_paiements', JSON.stringify(nextP));
               return nextP;
             }
-            return localPrev;
+            return prev;
           });
         }
 
-        // 3. Process and synchronize commands
-        setCommandes((prev) => {
-          let updated = false;
-          const next = [...prev];
-
-          remoteOrders.forEach((remote: Commande) => {
-            const index = next.findIndex((c) => c.id === remote.id);
-            if (index === -1) {
-              // Nouvelle commande provenant d'un client distant
-              next.push(remote);
-              updated = true;
-            } else if (JSON.stringify(next[index]) !== JSON.stringify(remote)) {
-              // Commande mise à jour (par exemple, le statut a changé)
-              next[index] = remote;
-              updated = true;
+        // D. Dépenses Supabase
+        const directDepenses = await fetchAllDepensesFromSupabase(activeRestaurantId);
+        if (Array.isArray(directDepenses) && directDepenses.length > 0) {
+          setDepenses((prev) => {
+            let dUpdated = false;
+            const nextD = [...prev];
+            directDepenses.forEach((dd) => {
+              if (!nextD.some((d) => d.id === dd.id)) {
+                nextD.push(dd);
+                dUpdated = true;
+              }
+            });
+            if (dUpdated) {
+              localStorage.setItem('yikeli_depenses', JSON.stringify(nextD));
+              return nextD;
             }
+            return prev;
           });
-
-          if (updated) {
-            localStorage.setItem('yikeli_commandes', JSON.stringify(next));
-            localStorage.setItem('yikeli_commandes_backup_sync', JSON.stringify(next));
-            return next;
-          }
-          return prev;
-        });
-      } catch (err) {
-        console.warn('Erreur lors de la récupération des commandes distantes:', err);
-      }
-
-      // 4. Pull menu de jour / plat modifications (getMenu)
-      try {
-        const menuResponse = await fetch('/.netlify/functions/getMenu');
-        if (menuResponse.ok) {
-          const menuData = await menuResponse.json();
-          if (menuData && menuData.plats && menuData.menuJour) {
-            setPlats((localPlats) => {
-              if (JSON.stringify(localPlats) !== JSON.stringify(menuData.plats)) {
-                localStorage.setItem('yikeli_plats', JSON.stringify(menuData.plats));
-                return menuData.plats;
-              }
-              return localPlats;
-            });
-            setMenuJour((localMenu) => {
-              if (JSON.stringify(localMenu) !== JSON.stringify(menuData.menuJour)) {
-                localStorage.setItem('yikeli_menujour', JSON.stringify(menuData.menuJour));
-                return menuData.menuJour;
-              }
-              return localMenu;
-            });
-          }
         }
-      } catch (menuErr) {
-        console.warn('Erreur lors de la récupération du menu distant:', menuErr);
+
+        // E. Stocks Supabase
+        const directStocks = await fetchAllStockEntriesFromSupabase(activeRestaurantId);
+        if (Array.isArray(directStocks) && directStocks.length > 0) {
+          setStockEntries((prev) => {
+            let sUpdated = false;
+            const nextS = [...prev];
+            directStocks.forEach((ds) => {
+              if (!nextS.some((s) => s.id === ds.id)) {
+                nextS.push(ds);
+                sUpdated = true;
+              }
+            });
+            if (sUpdated) {
+              localStorage.setItem('yikeli_stock_entries', JSON.stringify(nextS));
+              return nextS;
+            }
+            return prev;
+          });
+        }
+
+        setSupabaseStatus('CONNECTED');
+        setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+      } catch (err) {
+        console.warn('Supabase fetch cycle warning:', err);
       }
-    };
+    } else {
+      setSupabaseStatus('NOT_CONFIGURED');
+    }
+
+    // 2. Netlify Functions Fallback (si hébergé sans variables d'env directes)
+    try {
+      const response = await fetch('/.netlify/functions/getOrders');
+      const contentType = response.headers.get('content-type');
+      if (response.ok && contentType && contentType.includes('application/json')) {
+        const remoteOrders = await response.json();
+        if (Array.isArray(remoteOrders) && remoteOrders.length > 0) {
+          setCommandes((prev) => {
+            let updated = false;
+            const next = [...prev];
+            remoteOrders.forEach((remote: Commande) => {
+              const index = next.findIndex((c) => c.id === remote.id);
+              if (index === -1) {
+                next.push(remote);
+                updated = true;
+              } else if (JSON.stringify(next[index]) !== JSON.stringify(remote)) {
+                next[index] = remote;
+                updated = true;
+              }
+            });
+            if (updated) {
+              localStorage.setItem('yikeli_commandes', JSON.stringify(next));
+              return next;
+            }
+            return prev;
+          });
+        }
+      }
+    } catch (err) {
+      // Quiet fail
+    }
+
+    try {
+      const menuResponse = await fetch('/.netlify/functions/getMenu');
+      const menuContentType = menuResponse.headers.get('content-type');
+      if (menuResponse.ok && menuContentType && menuContentType.includes('application/json')) {
+        const menuData = await menuResponse.json();
+        if (menuData && menuData.plats && menuData.menuJour) {
+          setPlats((localPlats) => {
+            if (JSON.stringify(localPlats) !== JSON.stringify(menuData.plats)) {
+              localStorage.setItem('yikeli_plats', JSON.stringify(menuData.plats));
+              return menuData.plats;
+            }
+            return localPlats;
+          });
+          setMenuJour((localMenu) => {
+            if (JSON.stringify(localMenu) !== JSON.stringify(menuData.menuJour)) {
+              localStorage.setItem('yikeli_menujour', JSON.stringify(menuData.menuJour));
+              return menuData.menuJour;
+            }
+            return localMenu;
+          });
+        }
+      }
+    } catch (menuErr) {
+      // Quiet fail
+    }
+
+    setIsSyncing(false);
+  };
+
+  // Synchronisation des commandes périodique pour recevoir les commandes en ligne et mises à jour
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
 
     // Premier chargement immédiat
     pullRemoteOrders();
 
-    // Polling régulier toutes les 3 secondes (3000 ms)
-    const interval = setInterval(pullRemoteOrders, 3000);
+    // Polling régulier toutes les 4 secondes
+    const interval = setInterval(pullRemoteOrders, 4000);
     return () => clearInterval(interval);
+  }, [configVersion, activeRestaurantId]);
+
+  // Abonnement Supabase Realtime (WebSockets) pour propagation instantanée multi-terminaux
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const client = getSupabaseClient();
+    if (!client) {
+      setSupabaseStatus('NOT_CONFIGURED');
+      setSupabaseRealtimeActive(false);
+      return;
+    }
+
+    setSupabaseStatus('CONNECTING');
+
+    const channel = client
+      .channel(`yikeli_rt_${activeRestaurantId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'yikeli_orders' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const updatedCmd = formatSupabaseRecordToCommande(payload.new);
+            setCommandes((prev) => {
+              const idx = prev.findIndex((c) => c.id === updatedCmd.id);
+              let next: Commande[];
+              if (idx === -1) {
+                next = [updatedCmd, ...prev];
+              } else {
+                next = [...prev];
+                next[idx] = updatedCmd;
+              }
+              localStorage.setItem('yikeli_commandes', JSON.stringify(next));
+              return next;
+            });
+            setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = (payload.old as any)?.id;
+            if (deletedId) {
+              setCommandes((prev) => {
+                const next = prev.filter((c) => c.id !== deletedId);
+                localStorage.setItem('yikeli_commandes', JSON.stringify(next));
+                return next;
+              });
+            }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'yikeli_settings' },
+        (payload) => {
+          const data = payload.new as any;
+          if (data) {
+            if (Array.isArray(data.plats)) {
+              setPlats(data.plats);
+              localStorage.setItem('yikeli_plats', JSON.stringify(data.plats));
+            }
+            if (Array.isArray(data.menu_jour)) {
+              setMenuJour(data.menu_jour);
+              localStorage.setItem('yikeli_menujour', JSON.stringify(data.menu_jour));
+            }
+            if (Array.isArray(data.plat_categories)) {
+              setPlatCategories(data.plat_categories);
+              localStorage.setItem('yikeli_plat_categories', JSON.stringify(data.plat_categories));
+            }
+            if (Array.isArray(data.payment_methods)) {
+              setPaymentMethods(data.payment_methods);
+              localStorage.setItem('yikeli_payment_methods', JSON.stringify(data.payment_methods));
+            }
+            if (Array.isArray(data.depense_categories)) {
+              setDepenseCategories(data.depense_categories);
+              localStorage.setItem('yikeli_depense_categories', JSON.stringify(data.depense_categories));
+            }
+            if (data.saas_pricing) {
+              setSaasPricing(data.saas_pricing);
+              localStorage.setItem('yikeli_saas_pricing', JSON.stringify(data.saas_pricing));
+            }
+            setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'yikeli_paiements' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const raw = payload.new as any;
+            const newP: Paiement = {
+              id: raw.id,
+              commandeId: raw.commande_id,
+              method: raw.method,
+              amount: Number(raw.amount),
+              userId: raw.user_id || undefined,
+              createdAt: raw.created_at,
+            };
+            setPaiements((prev) => {
+              if (prev.some((p) => p.id === newP.id)) return prev;
+              const next = [newP, ...prev];
+              localStorage.setItem('yikeli_paiements', JSON.stringify(next));
+              return next;
+            });
+            setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'yikeli_depenses' },
+        (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const raw = payload.new as any;
+            const newDep: Depense = {
+              id: raw.id,
+              category: raw.category,
+              description: raw.description,
+              amount: Number(raw.amount),
+              date: raw.date,
+              status: raw.status || 'PAYEE',
+              submittedBy: raw.submitted_by || undefined,
+            };
+            setDepenses((prev) => {
+              const idx = prev.findIndex((d) => d.id === newDep.id);
+              let next: Depense[];
+              if (idx === -1) {
+                next = [newDep, ...prev];
+              } else {
+                next = [...prev];
+                next[idx] = newDep;
+              }
+              localStorage.setItem('yikeli_depenses', JSON.stringify(next));
+              return next;
+            });
+            setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setSupabaseRealtimeActive(true);
+          setSupabaseStatus('CONNECTED');
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          setSupabaseRealtimeActive(false);
+        }
+      });
+
+    return () => {
+      client.removeChannel(channel);
+    };
+  }, [configVersion, activeRestaurantId]);
+
+  // Broadcast sync registration
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const channel = new BroadcastChannel('yikeli_sync_channel');
+      channel.onmessage = (event) => {
+        if (event.data === 'sync') {
+          pullRemoteOrders();
+        }
+      };
+      return () => channel.close();
+    } catch (e) {
+      // BroadcastChannel disabled or unsupported
+    }
   }, []);
+
+  // SaaS Helper Functions
+  const saveAndSetRestaurants = (newRests: RestaurantTenant[]) => {
+    localStorage.setItem('yikeli_restaurants', JSON.stringify(newRests));
+    setRestaurants(newRests);
+    newRests.forEach((r) => {
+      syncRestaurantToSupabase(r).catch(() => {});
+    });
+  };
+
+  const createRestaurant = (data: Omit<RestaurantTenant, 'id' | 'createdAt'>) => {
+    const newRest: RestaurantTenant = {
+      ...data,
+      id: 'rest-' + generateUUID(),
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [newRest, ...restaurants];
+    saveAndSetRestaurants(updated);
+
+    // Synchronize manager account for login
+    const existingUser = users.find((u) => u.username === data.adminUsername);
+    if (!existingUser) {
+      const newUser: User = {
+        id: 'u-' + generateUUID(),
+        name: data.managerName,
+        phone: data.managerPhone,
+        email: data.managerEmail,
+        role: 'ADMIN',
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        username: data.adminUsername,
+        password: data.adminPassword,
+        poste: 'Gérant ' + data.name,
+      };
+      const updatedUsers = [...users, newUser];
+      localStorage.setItem('yikeli_users', JSON.stringify(updatedUsers));
+      setUsers(updatedUsers);
+    }
+
+    return newRest;
+  };
+
+  const updateRestaurant = (id: string, data: Partial<RestaurantTenant>) => {
+    const updated = restaurants.map((r) => {
+      if (r.id === id) {
+        const next = { ...r, ...data };
+        if (data.adminUsername || data.adminPassword || data.managerName) {
+          const userIndex = users.findIndex((u) => u.username === r.adminUsername || u.username === data.adminUsername);
+          if (userIndex !== -1) {
+            const updatedUsers = [...users];
+            updatedUsers[userIndex] = {
+              ...updatedUsers[userIndex],
+              name: data.managerName || updatedUsers[userIndex].name,
+              phone: data.managerPhone || updatedUsers[userIndex].phone,
+              email: data.managerEmail || updatedUsers[userIndex].email,
+              username: data.adminUsername || updatedUsers[userIndex].username,
+              password: data.adminPassword || updatedUsers[userIndex].password,
+            };
+            localStorage.setItem('yikeli_users', JSON.stringify(updatedUsers));
+            setUsers(updatedUsers);
+          }
+        }
+        return next;
+      }
+      return r;
+    });
+    saveAndSetRestaurants(updated);
+  };
+
+  const deleteRestaurant = (id: string) => {
+    const updated = restaurants.filter((r) => r.id !== id);
+    saveAndSetRestaurants(updated);
+  };
+
+  const renewSubscription = (id: string, plan: SaaSPlanKey, endDateStr: string) => {
+    updateRestaurant(id, {
+      subscriptionPlan: plan,
+      subscriptionEndDate: endDateStr,
+      status: 'ACTIF',
+    });
+  };
+
+  const updateSaaSPricing = (pricing: SaaSPricingConfig) => {
+    localStorage.setItem('yikeli_saas_pricing', JSON.stringify(pricing));
+    setSaasPricing(pricing);
+  };
+
+  const setActiveRestaurantId = (id: string) => {
+    localStorage.setItem('yikeli_active_restaurant_id', id);
+    setActiveRestaurantIdState(id);
+  };
+
+  const activeRestaurant = useMemo(() => {
+    return restaurants.find((r) => r.id === activeRestaurantId) || restaurants[0] || {
+      id: 'rest-1',
+      name: 'Restaurant Yikéli',
+      logo: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=200&auto=format&fit=crop&q=80',
+      slogan: 'Le goût authentique des saveurs ivoiriennes',
+      address: 'Route d\'Abatta, derrière la pharmacie • Yango Djorogobité 1, Abidjan',
+      managerName: 'Flavien Kouassi',
+      managerPhone: '+225 05 01 14 92 44',
+      managerEmail: 'flavien004@gmail.com',
+      contacts: '+225 05 01 14 92 44 / +225 07 16 61 46 69',
+      whatsapp: '+225 05 01 14 92 44',
+      subscriptionPlan: 'PREMIUM_ANNUEL',
+      subscriptionStartDate: '2026-01-01',
+      subscriptionEndDate: '2026-12-31',
+      status: 'ACTIF',
+      adminUsername: 'admin',
+      adminPassword: 'admin',
+      createdAt: '2026-01-01T08:00:00Z',
+    };
+  }, [restaurants, activeRestaurantId]);
 
   return {
     plats,
@@ -1872,6 +2513,12 @@ export function useYikeliDb() {
     depenseCategories,
     stockEntries,
     suppliers,
+    restaurants,
+    saasPricing,
+    activeRestaurantId,
+    activeRestaurant,
+    isSyncing,
+    forceManualRefresh: pullRemoteOrders,
     // Operations
     createPlat,
     updatePlat,
@@ -1904,10 +2551,22 @@ export function useYikeliDb() {
     createSupplier,
     updateSupplier,
     deleteSupplier,
+    createRestaurant,
+    updateRestaurant,
+    deleteRestaurant,
+    renewSubscription,
+    updateSaaSPricing,
+    setActiveRestaurantId,
     resetDatabaseToDefault,
     lastBackupTime,
     isBackupSuccess,
     forceManualBackup,
     isOffline,
+    // Supabase Cloud Sync
+    supabaseStatus,
+    supabaseRealtimeActive,
+    lastSyncTime,
+    refreshSupabaseConfig: () => setConfigVersion((v) => v + 1),
+    pushAllLocalDataToSupabase,
   };
 }

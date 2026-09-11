@@ -32,6 +32,7 @@ import {
   Sun,
   Moon,
   Key,
+  RotateCw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -283,8 +284,12 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
     const restToPay = selectedOrderForReceipt.total - totalPaid;
 
     // Stylized WhatsApp bold text layout
-    const textMsg = `*RESTAURANT YIKÉLI* 👨‍🍳🍗\n` +
-      `_Les délicieuses saveurs locales d'Abidjan_\n` +
+    const restName = db.activeRestaurant?.name || 'RESTAURANT';
+    const restAddr = db.activeRestaurant?.address || '';
+    const restPhone = db.activeRestaurant?.contacts || db.activeRestaurant?.managerPhone || '';
+
+    const textMsg = `*${restName.toUpperCase()}* 👨‍🍳🍗\n` +
+      `_${db.activeRestaurant?.slogan || 'Les délicieuses saveurs locales'}_\n` +
       `------------------------------------------\n` +
       `🧾 *REÇU DE PAYE — TICKET DE CAISSE*\n\n` +
       `📄 *Ticket ID :* #${selectedOrderForReceipt.id}\n` +
@@ -300,8 +305,8 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
       `⚠️ *RESTE À PAYER :* ${formatFCFA(restToPay)}\n` +
       `------------------------------------------\n` +
       `✨ Merci pour votre confiance et bon appétit ! 🎉\n` +
-      `📍 Route d'Abatta, près de Djorogobité 1 • N° 206\n` +
-      `📞 Contact: +225 05 01 14 92 44`;
+      `📍 ${restAddr}\n` +
+      `📞 Contact: ${restPhone}`;
 
     // Strip out non-numeric characters from the WhatsApp phone
     let formattedPhone = recipientPhone.replace(/\D/g, '');
@@ -476,8 +481,8 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-orange-500 rounded-2xl p-6 text-white shadow-md">
         <div>
           <div className="flex items-center gap-3">
-            <Logo size="sm" width={52} height={52} className="bg-white p-1 rounded-full shadow-md" />
-            <h2 className="text-xl font-bold tracking-tight">Point de Vente Tactile (POS) - Yikéli</h2>
+            <Logo size="sm" logoUrl={db.activeRestaurant?.logo} restaurantName={db.activeRestaurant?.name} width={52} height={52} className="bg-white p-1 rounded-full shadow-md" />
+            <h2 className="text-xl font-bold tracking-tight">Point de Vente Tactile (POS) - {db.activeRestaurant?.name || 'Restaurant'}</h2>
           </div>
           <p className="text-orange-100 text-xs mt-1">
             Opérations de service • Prise d'ordres sur-place & encaissements multiples.
@@ -493,6 +498,20 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
           >
             <HelpCircle className="w-4 h-4 text-yellow-300" />
             <span>Aide</span>
+          </button>
+          
+          <div className="h-5 w-px bg-white/20" />
+
+          <button
+            onClick={() => db.forceManualRefresh && db.forceManualRefresh()}
+            disabled={db.isSyncing}
+            className={`p-1.5 hover:bg-orange-700/50 rounded-lg text-white/90 hover:text-white transition cursor-pointer flex items-center gap-1 shrink-0 text-xs font-bold ${
+              db.isSyncing ? 'animate-pulse text-yellow-300' : ''
+            }`}
+            title="Sychroniser toutes les données"
+          >
+            <RotateCw className={`w-4 h-4 text-yellow-300 ${db.isSyncing ? 'animate-spin' : ''}`} />
+            <span>{db.isSyncing ? 'Synchro...' : 'Synchro'}</span>
           </button>
           
           <div className="h-5 w-px bg-white/20" />
@@ -1350,9 +1369,8 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
           <div className="bg-slate-55 p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4">
             <h4 className="text-xs font-bold text-gray-800 uppercase tracking-widest">Notes de fin de journée</h4>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Vérifiez la concordance des soldes et encaissements mobile money (Wave, Orange Money) directement sur les smartphones de caisse avec les numéros officiels Yikéli : 
-              <span className="font-semibold text-gray-700 block mt-1">+225 05 01 14 92 44</span>
-              <span className="font-semibold text-gray-700 block">+225 07 16 61 46 69</span>
+              Vérifiez la concordance des soldes et encaissements mobile money (Wave, Orange Money) directement sur les smartphones de caisse avec les numéros officiels : 
+              <span className="font-semibold text-gray-700 block mt-1">{db.activeRestaurant?.contacts || db.activeRestaurant?.managerPhone || '+225 00 00 00 00 00'}</span>
             </p>
             <div className="bg-white p-3 rounded-xl border flex items-center gap-3">
               <Activity className="w-5 h-5 text-orange-500" />
@@ -1677,11 +1695,10 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 
                 {/* Header Restaurant */}
                 <div className="text-center space-y-0.5">
-                  <Logo size="sm" width={64} height={64} className="mx-auto mb-1.5" />
-                  <h4 className="text-xs font-bold uppercase tracking-wider">Restaurant Yikéli</h4>
-                  <p className="text-[10px] text-gray-400">Abidjan Route d'Abatta</p>
-                  <p className="text-[10px] text-gray-400">Djorogobité 1 • Adr Yango: 206</p>
-                  <p className="text-[10px] text-gray-400">Tél: +225 05 01 14 92 44</p>
+                  <Logo size="sm" logoUrl={db.activeRestaurant?.logo} restaurantName={db.activeRestaurant?.name} width={64} height={64} className="mx-auto mb-1.5" />
+                  <h4 className="text-xs font-bold uppercase tracking-wider">{db.activeRestaurant?.name || 'Restaurant'}</h4>
+                  <p className="text-[10px] text-gray-400">{db.activeRestaurant?.address}</p>
+                  <p className="text-[10px] text-gray-400">Tél: {db.activeRestaurant?.contacts || db.activeRestaurant?.managerPhone}</p>
                   <p className="text-[10px] text-gray-400">--------------------------------</p>
                 </div>
 
@@ -1734,7 +1751,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 {/* Footer Message */}
                 <div className="text-center space-y-1 pt-2">
                   <p className="text-[9px] text-gray-450 uppercase font-semibold">Merci de votre fidélité !</p>
-                  <p className="text-[8px] text-gray-400">Yikéli, les excellentes saveurs locales.</p>
+                  <p className="text-[8px] text-gray-400">{db.activeRestaurant?.slogan || `${db.activeRestaurant?.name || 'Restaurant'}, les excellentes saveurs locales.`}</p>
                 </div>
 
               </div>
@@ -2077,7 +2094,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                   Changer mon mot de passe
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">
-                  Sécurisez l'accès à votre compte de caisse Yikéli.
+                  Sécurisez l'accès à votre compte de caisse.
                 </p>
               </div>
 

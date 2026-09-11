@@ -4,27 +4,33 @@ import AdminInterface from './components/AdminInterface';
 import EmployeeInterface from './components/EmployeeInterface';
 import ClientInterface from './components/ClientInterface';
 import ServerMonitorScreen from './components/ServerMonitorScreen';
+import SuperAdminSaaS from './components/SuperAdminSaaS';
+import SaaSLandingPage from './components/SaaSLandingPage';
 import LoginScreen from './components/LoginScreen';
+import SupabaseSyncModal from './components/SupabaseSyncModal';
 import { User } from './types';
 import Logo from './components/Logo';
 import {
   ChefHat,
   Users,
   Smartphone,
-  ShieldAlert,
   Sliders,
   Settings,
-  HelpCircle,
-  Activity,
-  PhoneCall,
-  RotateCw,
   Tv,
+  Building2,
+  ShieldCheck,
+  RotateCw,
+  LogOut,
+  ChevronDown,
+  Sparkles,
+  Database,
+  Cloud,
 } from 'lucide-react';
 
 export default function App() {
   const db = useYikeliDb();
 
-  // 1. Detect if URL specifies client-only mode or simulator mode
+  // Detect query params
   const getQueryParam = (key: string) => {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
@@ -32,147 +38,187 @@ export default function App() {
   };
 
   const isClientMode = getQueryParam('view') === 'client' || window.location.hash === '#/client' || window.location.hash === '#client';
-  const isSimulatorModeEnabled = getQueryParam('simulator') === 'true' || getQueryParam('demo') === 'true';
 
-  // Role simulation selection - if client is requested explicitly, force client view and completely seal/disable swapper
-  const defaultRole = isClientMode ? 'client' : 'portal';
-  const [currentRoleView, setCurrentRoleView] = useState<'client' | 'employe' | 'admin' | 'salle_serveurs' | 'portal'>(defaultRole);
+  const defaultRole = isClientMode ? 'client' : 'landing';
+  const [currentRoleView, setCurrentRoleView] = useState<'saas' | 'landing' | 'admin' | 'employe' | 'salle_serveurs' | 'client' | 'portal'>(defaultRole);
 
-  // Authenticated state persistence in current simulation sandbox
+  // Authenticated states
+  const [loggedSuperAdmin, setLoggedSuperAdmin] = useState<User | null>(null);
   const [loggedEmployee, setLoggedEmployee] = useState<User | null>(null);
   const [loggedAdmin, setLoggedAdmin] = useState<User | null>(null);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+
+  const activeRest = db.activeRestaurant;
 
   return (
     <div className="min-h-screen bg-slate-50/50 flex flex-col font-sans" id="application-root">
       
-      {/* Premium Simulator Role Swapper Header - Only visible if simulator URL query is enabled */}
-      {isSimulatorModeEnabled && (
-        <div className="bg-slate-900 border-b border-slate-800 text-white py-3.5 px-4 sticky top-0 z-50 shadow-md">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+      {/* SaaS Navigation Header */}
+      <div className="bg-slate-900 border-b border-slate-800 text-white py-3 px-4 sticky top-0 z-50 shadow-md">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+          
+          {/* Tenant branding & Restaurant Switcher */}
+          <div className="flex items-center gap-3">
+            <Logo size="sm" width={28} height={28} className="bg-white rounded-full p-0.5 shadow-sm shrink-0" />
             
-            {/* Left Title branding */}
-            <div className="flex items-center gap-2.5">
-              <span className="w-2.5 h-2.5 bg-orange-500 rounded-full animate-ping"></span>
-              <div className="flex items-center gap-2">
-                <Logo size="sm" width={24} height={24} className="bg-white rounded-full p-0.5 shadow-sm" />
-                <span className="font-extrabold uppercase tracking-widest text-orange-450 font-mono text-[11px]">
-                  Restaurant Yikéli 
-                </span>
-              </div>
-            </div>
-
-            {/* Core role selection buttons */}
-            <div className="flex flex-wrap items-center justify-center gap-1.5 bg-slate-800 p-1 rounded-xl border border-slate-700/60 shadow-inner">
-              
-              <button
-                onClick={() => setCurrentRoleView('client')}
-                id="switch-view-client"
-                className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
-                  currentRoleView === 'client'
-                    ? 'bg-orange-500 text-white shadow'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                1. Vue Client
-              </button>
-
-              <button
-                onClick={() => setCurrentRoleView('employe')}
-                id="switch-view-employee"
-                className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
-                  currentRoleView === 'employe'
-                    ? 'bg-orange-500 text-white shadow'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                2. Vue Caisse
-              </button>
-
-              <button
-                onClick={() => setCurrentRoleView('salle_serveurs')}
-                id="switch-view-salle-serveurs"
-                className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
-                  currentRoleView === 'salle_serveurs'
-                    ? 'bg-orange-500 text-white shadow'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                <Tv className="w-3.5 h-3.5" />
-                3. Écran Serveurs
-              </button>
-
-              <button
-                onClick={() => setCurrentRoleView('admin')}
-                id="switch-view-admin"
-                className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
-                  currentRoleView === 'admin'
-                    ? 'bg-orange-500 text-white shadow'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                <Sliders className="w-3.5 h-3.5" />
-                4. Gérant Admin
-              </button>
-
-              <button
-                onClick={() => setCurrentRoleView('portal')}
-                id="switch-view-portal"
-                className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
-                  currentRoleView === 'portal'
-                    ? 'bg-orange-500 text-white shadow'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                <Settings className="w-3.5 h-3.5" />
-                Espace Portail
-              </button>
-
-            </div>
-
-            {/* Right helper Actions */}
-            <div className="flex items-center gap-3">
-              {/* Database Safe-Save Visual Status Indicator */}
-              <div className="flex items-center gap-2 bg-slate-800/85 px-2.5 py-1.5 rounded-lg border border-slate-700/60 text-[10px] text-gray-300 font-mono">
-                <span className={`w-1.5 h-1.5 rounded-full ${db.isBackupSuccess ? 'bg-emerald-400 animate-ping' : 'bg-emerald-500'}`}></span>
-                <span className="truncate">
-                  {db.lastBackupTime ? `Sûr: ${db.lastBackupTime}` : 'Protection auto active'}
-                </span>
-                <button
-                  onClick={() => db.forceManualBackup()}
-                  className="ml-1 px-1.5 py-0.5 rounded bg-slate-700 hover:bg-orange-500 hover:text-white font-bold text-gray-200 transition text-[9px]"
-                  title="Sauvegarder l'état complet de la session"
-                >
-                  Sauver
-                </button>
-              </div>
-
-              <button
-                onClick={() => {
-                  if (confirm('Voulez-vous réinitialiser le simulateur aux valeurs d\'usine de Côte d\'Ivoire ? Les données enregistrées seront effacées.')) {
-                    db.resetDatabaseToDefault();
-                    window.location.reload();
-                  }
+            <div className="flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 px-3 py-1.5 rounded-xl">
+              <Building2 className="w-4 h-4 text-orange-400 shrink-0" />
+              <select
+                value={db.activeRestaurantId}
+                onChange={(e) => {
+                  db.setActiveRestaurantId(e.target.value);
                 }}
-                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 hover:text-orange-400 border border-slate-700 text-xs font-semibold rounded-lg text-gray-400 transition flex items-center gap-1"
-                title="Réinitialiser"
+                className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer pr-2"
               >
-                <RotateCw className="w-3.5 h-3.5" />
-                Réinitialiser
-              </button>
+                {db.restaurants.map((r) => (
+                  <option key={r.id} value={r.id} className="bg-slate-900 text-white">
+                    {r.name} ({r.subscriptionPlan})
+                  </option>
+                ))}
+              </select>
             </div>
+          </div>
+
+          {/* Core role selection buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-1 bg-slate-800/90 p-1 rounded-xl border border-slate-700/80 shadow-inner">
+            
+            <button
+              onClick={() => setCurrentRoleView('landing')}
+              id="nav-landing"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'landing'
+                  ? 'bg-orange-500 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-orange-300" />
+              Vitrine SaaS
+            </button>
+
+            <button
+              onClick={() => setCurrentRoleView('saas')}
+              id="nav-saas"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'saas'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-indigo-300" />
+              Super Admin
+            </button>
+
+            <button
+              onClick={() => setCurrentRoleView('admin')}
+              id="nav-admin"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'admin'
+                  ? 'bg-orange-500 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              Gérant Admin
+            </button>
+
+            <button
+              onClick={() => setCurrentRoleView('employe')}
+              id="nav-employe"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'employe'
+                  ? 'bg-orange-500 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              Caisse POS
+            </button>
+
+            <button
+              onClick={() => setCurrentRoleView('salle_serveurs')}
+              id="nav-salle-serveurs"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'salle_serveurs'
+                  ? 'bg-orange-500 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <Tv className="w-3.5 h-3.5" />
+              Écran Salle
+            </button>
+
+            <button
+              onClick={() => setCurrentRoleView('client')}
+              id="nav-client"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'client'
+                  ? 'bg-orange-500 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              Vue Client
+            </button>
+
+            <button
+              onClick={() => setCurrentRoleView('portal')}
+              id="nav-portal"
+              className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                currentRoleView === 'portal'
+                  ? 'bg-orange-500 text-white shadow'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Portail
+            </button>
 
           </div>
-        </div>
-      )}
 
-      {/* Main Responsive Body with container bounds */}
+          {/* Right backup & status */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsSupabaseModalOpen(true)}
+              id="btn-supabase-sync"
+              title="Gérer la synchronisation Supabase (Multi-postes & Cloud Netlify)"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-bold transition shadow-sm cursor-pointer ${
+                db.supabaseStatus === 'CONNECTED'
+                  ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/80'
+                  : db.supabaseStatus === 'CONNECTING'
+                  ? 'bg-amber-950/70 border-amber-500/50 text-amber-300 hover:bg-amber-900/80'
+                  : 'bg-slate-800 hover:bg-slate-750 border-slate-700 text-gray-300 hover:text-white'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="hidden sm:inline">
+                {db.supabaseStatus === 'CONNECTED'
+                  ? 'Supabase Connecté'
+                  : db.supabaseStatus === 'CONNECTING'
+                  ? 'Connexion...'
+                  : 'Synchro Supabase'}
+              </span>
+              {db.supabaseRealtimeActive ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" title="Realtime Actif (WebSockets)"></span>
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400/80 shrink-0"></span>
+              )}
+            </button>
+
+            <div className="flex items-center gap-1.5 bg-slate-800/85 px-2.5 py-1.5 rounded-xl border border-slate-700/60 text-[10px] text-gray-300 font-mono">
+              <span className={`w-1.5 h-1.5 rounded-full ${db.isBackupSuccess ? 'bg-emerald-400' : 'bg-emerald-500'}`}></span>
+              <span className="truncate">SaaS V1.0</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8" id="layout-view-canvas">
         
         {/* Portal landing view */}
         {currentRoleView === 'portal' && (
-          <div className="max-w-3xl mx-auto my-8 space-y-8 animate-fadeIn animate-none" id="yikeli-restaurant-portal">
+          <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fadeIn" id="yikeli-restaurant-portal">
             {/* Header branding */}
             <div className="text-center space-y-4">
               <div className="flex justify-center">
@@ -180,20 +226,40 @@ export default function App() {
               </div>
               <div className="space-y-1.5">
                 <h2 className="text-2xl font-extrabold uppercase tracking-widest text-slate-900 font-sans">
-                  Restaurant Yikéli
+                  {activeRest.name}
                 </h2>
                 <p className="text-xs text-orange-650 font-mono tracking-widest uppercase font-black">
-                  Portail Professionnel &bull; Abidjan, Côte d'Ivoire
+                  Plateforme SaaS RestoChain &bull; {activeRest.address}
                 </p>
                 <p className="text-xs text-gray-400 max-w-lg mx-auto font-medium">
-                  Bienvenue sur le système d'exploitation du restaurant. Veuillez sélectionner votre espace de travail pour vous connecter de manière sécurisée.
+                  {activeRest.slogan || "Bienvenue sur le système d'exploitation du restaurant. Sélectionnez votre espace de travail."}
                 </p>
               </div>
             </div>
 
             {/* Grid of access cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               
+              {/* Card 0: Super Admin RestoChain SaaS */}
+              <button
+                type="button"
+                onClick={() => setCurrentRoleView('saas')}
+                className="bg-slate-900 text-white hover:bg-slate-800 border border-slate-800 rounded-3xl p-6 text-center space-y-4 shadow-sm hover:shadow-lg transition duration-300 cursor-pointer group"
+              >
+                <div className="w-12 h-12 bg-indigo-600/20 text-indigo-400 rounded-2xl flex items-center justify-center mx-auto group-hover:scale-110 transition duration-200">
+                  <ShieldCheck className="w-6 h-6 text-indigo-400" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-extrabold text-white">Super Admin RestoChain</h3>
+                  <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                    Gestion globale de la plateforme, des abonnements et des restaurants.
+                  </p>
+                </div>
+                <div className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest group-hover:translate-x-1.5 transition duration-200 inline-flex items-center gap-1 font-mono">
+                  Gérer la Plateforme &rarr;
+                </div>
+              </button>
+
               {/* Card 1: Caisse */}
               <button
                 type="button"
@@ -206,7 +272,7 @@ export default function App() {
                 <div className="space-y-1">
                   <h3 className="text-sm font-extrabold text-slate-800">Espace Caisse</h3>
                   <p className="text-[11px] text-gray-400 leading-relaxed font-semibold">
-                    Caissiers, vendeurs &amp; gérants de service. Prise de commandes sur place et facturation.
+                    Caissiers et vendeurs. Prise de commandes sur place et facturation.
                   </p>
                 </div>
                 <div className="text-[10px] font-extrabold text-orange-600 uppercase tracking-widest group-hover:translate-x-1.5 transition duration-200 inline-flex items-center gap-1 font-mono">
@@ -226,7 +292,7 @@ export default function App() {
                 <div className="space-y-1">
                   <h3 className="text-sm font-extrabold text-slate-800">Écran en Salle</h3>
                   <p className="text-[11px] text-gray-400 leading-relaxed font-semibold">
-                    Kiosque de suivi pour les serveurs. Affichage en temps réel des plats prêts à servir.
+                    Kiosque de suivi pour les serveurs. Affichage en temps réel des plats prêts.
                   </p>
                 </div>
                 <div className="text-[10px] font-extrabold text-amber-650 uppercase tracking-widest group-hover:translate-x-1.5 transition duration-200 inline-flex items-center gap-1 font-mono">
@@ -246,7 +312,7 @@ export default function App() {
                 <div className="space-y-1">
                   <h3 className="text-sm font-extrabold text-slate-800">Bureau Gérant</h3>
                   <p className="text-[11px] text-gray-400 leading-relaxed font-semibold">
-                    Direction générale. Contrôle des recettes nettes, réglages de la carte et du personnel.
+                    Direction générale. Configuration du restaurant, menu, finances et personnel.
                   </p>
                 </div>
                 <div className="text-[10px] font-extrabold text-slate-700 uppercase tracking-widest group-hover:translate-x-1.5 transition duration-200 inline-flex items-center gap-1 font-mono">
@@ -255,65 +321,91 @@ export default function App() {
               </button>
 
             </div>
-
-            {/* Note de Sécurité */}
-            <div className="p-4 bg-orange-50/50 border border-orange-100 rounded-2xl text-center space-y-1">
-              <span className="text-[9px] font-black text-orange-850 uppercase tracking-widest block font-mono">⚠️ Accès Client Restreint</span>
-              <p className="text-[11px] text-orange-950 font-medium">
-                Les clients doivent scanner le QR code de leur table physique ou utiliser l'adresse web client dédiée pour commander. L'accès à ce portail d'administration leur est strictement interdit.
-              </p>
-            </div>
           </div>
         )}
 
-        {/* Active view mounted conditionally based on Simulator state */}
-        {currentRoleView === 'client' && (
+        {/* View Landing: SaaS Vitrine Landing Page */}
+        {currentRoleView === 'landing' && (
           <div className="space-y-4 animate-fadeIn">
-            {isSimulatorModeEnabled && (
-              /* Quick simulator help banner */
-              <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl flex items-center gap-3 text-xs text-blue-900 shadow-sm max-w-xl mx-auto">
-                <Smartphone className="w-5 h-5 text-blue-500 shrink-0" />
-                <div>
-                  <span className="font-bold">Mode Simulation Client : </span>
-                  Simulez la commande d'un client à distance depuis son smartphone. Sélectionnez vos mets, validez votre commande et contactez le restaurant !
+            <SaaSLandingPage
+              saasPricing={db.saasPricing}
+              onNavigateView={(v) => setCurrentRoleView(v)}
+              activeRestaurantName={activeRest.name}
+            />
+          </div>
+        )}
+
+        {/* View 0: SaaS Super Admin Dashboard */}
+        {currentRoleView === 'saas' && (
+          <div className="space-y-4 animate-fadeIn">
+            {!loggedSuperAdmin ? (
+              <div className="space-y-4">
+                <LoginScreen
+                  users={db.users}
+                  requiredRole="SUPER_ADMIN"
+                  onLoginSuccess={(u) => setLoggedSuperAdmin(u)}
+                />
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentRoleView('portal')}
+                    className="text-xs font-extrabold text-gray-400 hover:text-orange-600 transition tracking-wide uppercase font-mono cursor-pointer"
+                  >
+                    &larr; Retour au Portail Personnel
+                  </button>
                 </div>
               </div>
+            ) : (
+              <SuperAdminSaaS
+                restaurants={db.restaurants}
+                saasPricing={db.saasPricing}
+                activeRestaurantId={db.activeRestaurantId}
+                onCreateRestaurant={db.createRestaurant}
+                onUpdateRestaurant={db.updateRestaurant}
+                onDeleteRestaurant={db.deleteRestaurant}
+                onRenewSubscription={db.renewSubscription}
+                onUpdatePricing={db.updateSaaSPricing}
+                onSelectActiveRestaurant={(id) => {
+                  db.setActiveRestaurantId(id);
+                  setCurrentRoleView('admin');
+                }}
+                onLogoutSuperAdmin={() => {
+                  setLoggedSuperAdmin(null);
+                  setCurrentRoleView('portal');
+                }}
+              />
             )}
+          </div>
+        )}
 
+        {/* View 1: Client digital menu */}
+        {currentRoleView === 'client' && (
+          <div className="space-y-4 animate-fadeIn">
             <ClientInterface db={db} />
           </div>
         )}
 
+        {/* View 2: Cashier POS */}
         {currentRoleView === 'employe' && (
           <div className="space-y-4 animate-fadeIn">
-            {isSimulatorModeEnabled && (
-              <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-2xl flex items-center gap-3 text-xs text-yellow-900 shadow-sm">
-                <Users className="w-5 h-5 text-yellow-600 shrink-0" />
-                <div>
-                  <span className="font-bold">Mode Simulation Serveur / Caissier : </span>
-                  Prenez des commandes sur place, enregistrez des paiements multicanaux (espèces, Wave, Orange Money) et préparez les rôtis puis imprimez leur ticket client !
-                </div>
-              </div>
-            )}
-
             {!loggedEmployee ? (
               <div className="space-y-4">
                 <LoginScreen
                   users={db.users}
                   requiredRole="EMPLOYE"
+                  restaurantName={activeRest.name}
+                  restaurantLogo={activeRest.logo}
                   onLoginSuccess={(u) => setLoggedEmployee(u)}
                 />
-                {!isSimulatorModeEnabled && (
-                  <div className="text-center">
-                    <button
-                      type="button"
-                      onClick={() => setCurrentRoleView('portal')}
-                      className="text-xs font-extrabold text-gray-400 hover:text-orange-600 transition tracking-wide uppercase font-mono cursor-pointer"
-                    >
-                      &larr; Retour au Portail Personnel
-                    </button>
-                  </div>
-                )}
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentRoleView('portal')}
+                    className="text-xs font-extrabold text-gray-400 hover:text-orange-600 transition tracking-wide uppercase font-mono cursor-pointer"
+                  >
+                    &larr; Retour au Portail Personnel
+                  </button>
+                </div>
               </div>
             ) : (
               <EmployeeInterface
@@ -321,80 +413,59 @@ export default function App() {
                 activeEmployee={loggedEmployee}
                 onLogout={() => {
                   setLoggedEmployee(null);
-                  if (!isSimulatorModeEnabled) {
-                    setCurrentRoleView('portal');
-                  }
+                  setCurrentRoleView('portal');
                 }}
               />
             )}
           </div>
         )}
 
+        {/* View 3: Server Monitor Screen */}
         {currentRoleView === 'salle_serveurs' && (
           <div className="space-y-4 animate-fadeIn">
-            {isSimulatorModeEnabled ? (
-              <div className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex items-center gap-3 text-xs text-orange-950 shadow-sm">
-                <Tv className="w-5 h-5 text-orange-600 shrink-0" />
-                <div>
-                  <span className="font-bold">Écran en Salle pour les Serveurs : </span>
-                  Affiche toutes les commandes prêtes et notifiées « Servi ». Les serveurs peuvent les apporter aux clients et valider leur service en cliquant sur le gros bouton vert !
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between pb-1">
-                <button
-                  type="button"
-                  onClick={() => setCurrentRoleView('portal')}
-                  className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 font-extrabold text-[10px] rounded-xl border border-gray-250 shadow-sm transition-all cursor-pointer flex items-center gap-1.5 uppercase tracking-wide"
-                >
-                  &larr; Retour au Portail Personnel
-                </button>
-              </div>
-            )}
+            <div className="flex items-center justify-between pb-1">
+              <button
+                type="button"
+                onClick={() => setCurrentRoleView('portal')}
+                className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 font-extrabold text-[10px] rounded-xl border border-gray-250 shadow-sm transition-all cursor-pointer flex items-center gap-1.5 uppercase tracking-wide"
+              >
+                &larr; Retour au Portail Personnel
+              </button>
+            </div>
             <ServerMonitorScreen db={db} />
           </div>
         )}
 
+        {/* View 4: Restaurant Admin */}
         {currentRoleView === 'admin' && (
           <div className="space-y-4 animate-fadeIn">
-            {isSimulatorModeEnabled && (
-              <div className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex items-center gap-3 text-xs text-orange-950 shadow-sm">
-                <Sliders className="w-5 h-5 text-orange-500 shrink-0" />
-                <div>
-                  <span className="font-bold">Mode Simulation Gérant Administrateur : </span>
-                  Pilotez le restaurant. Ajustez les prix, planifiez le « Menu du Jour », visualisez les bénéfices nets et gérez les comptes du personnel !
-                </div>
-              </div>
-            )}
-
             {!loggedAdmin ? (
               <div className="space-y-4">
                 <LoginScreen
                   users={db.users}
                   requiredRole="ADMIN"
+                  restaurantName={activeRest.name}
+                  restaurantLogo={activeRest.logo}
                   onLoginSuccess={(u) => setLoggedAdmin(u)}
                 />
-                {!isSimulatorModeEnabled && (
-                  <div className="text-center">
-                    <button
-                      type="button"
-                      onClick={() => setCurrentRoleView('portal')}
-                      className="text-xs font-extrabold text-gray-400 hover:text-orange-600 transition tracking-wide uppercase font-mono cursor-pointer"
-                    >
-                      &larr; Retour au Portail Personnel
-                    </button>
-                  </div>
-                )}
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentRoleView('portal')}
+                    className="text-xs font-extrabold text-gray-400 hover:text-orange-600 transition tracking-wide uppercase font-mono cursor-pointer"
+                  >
+                    &larr; Retour au Portail Personnel
+                  </button>
+                </div>
               </div>
             ) : (
               <AdminInterface
                 db={db}
                 activeAdmin={loggedAdmin}
+                onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
                 onLogout={() => {
                   setLoggedAdmin(null);
-                  if (!isSimulatorModeEnabled) {
-                    setCurrentRoleView('portal');
-                  }
+                  setCurrentRoleView('portal');
                 }}
               />
             )}
@@ -403,11 +474,35 @@ export default function App() {
 
       </main>
 
+      {/* Supabase Cloud Synchronisation Modal */}
+      <SupabaseSyncModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        supabaseStatus={db.supabaseStatus}
+        supabaseRealtimeActive={db.supabaseRealtimeActive}
+        lastSyncTime={db.lastSyncTime}
+        onForceSync={async () => {
+          await db.pushAllLocalDataToSupabase();
+        }}
+        onPushLocalToRemote={db.pushAllLocalDataToSupabase}
+        localStats={{
+          commandesCount: db.commandes.length,
+          platsCount: db.plats.length,
+          paiementsCount: db.paiements.length,
+          depensesCount: db.depenses.length,
+          clientsCount: db.clients.length,
+          stockEntriesCount: db.stockEntries.length,
+        }}
+        onConfigChanged={() => {
+          db.refreshSupabaseConfig();
+        }}
+      />
+
       {/* Footer Branding Area */}
       <footer className="bg-white border-t border-gray-100 py-6 text-center text-xs text-gray-400 mt-auto select-none">
         <div className="max-w-7xl mx-auto space-y-1">
-          <p className="font-bold text-gray-500">© 2026 Restaurant Yikéli — Abidjan, Côte d'Ivoire</p>
-          <p className="text-[10px] text-gray-400">Route d'Abatta, derrière la pharmacie • Yango Djorogobité 1 • Contact: +225 05 01 14 92 44</p>
+          <p className="font-bold text-gray-500">© 2026 {activeRest.name} — Multi-Tenant SaaS Platform</p>
+          <p className="text-[10px] text-gray-400">{activeRest.address} &bull; Contact: {activeRest.contacts}</p>
         </div>
       </footer>
 

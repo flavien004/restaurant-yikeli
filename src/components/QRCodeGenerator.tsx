@@ -3,7 +3,13 @@ import QRCode from 'qrcode';
 import { Copy, Download, Printer, Camera, HelpCircle, Check, Grid, RefreshCw, Layers } from 'lucide-react';
 import Logo from './Logo';
 
-export default function QRCodeGenerator() {
+interface QRCodeGeneratorProps {
+  restaurantLogo?: string;
+  restaurantName?: string;
+}
+
+export default function QRCodeGenerator({ restaurantLogo, restaurantName }: QRCodeGeneratorProps) {
+  const displayName = restaurantName || 'RestoChain';
   const [selectedTable, setSelectedTable] = useState<number | ''>('');
   const [qrColor, setQrColor] = useState<string>('#ea580c'); // Orange-600 by default
   const [copySuccess, setCopySuccess] = useState(false);
@@ -220,11 +226,11 @@ export default function QRCodeGenerator() {
             {/* Visual simulation of a table card stand */}
             <div className="border border-gray-200 bg-slate-50 rounded-2xl p-5 shadow-lg max-w-[245px] w-full flex flex-col items-center gap-3 border-b-4 border-b-gray-300">
               <div className="p-1.5 bg-white rounded-xl shadow-xs border border-gray-100 max-w-[50px]">
-                <Logo size="custom" width={32} height={32} />
+                <Logo size="custom" width={32} height={32} logoUrl={restaurantLogo} restaurantName={displayName} />
               </div>
               
               <div className="text-center space-y-0.5">
-                <h5 className="font-extrabold text-xs text-slate-800">Restaurant Yikéli</h5>
+                <h5 className="font-extrabold text-xs text-slate-800">{displayName}</h5>
                 <p className="text-[9px] text-gray-400 font-bold tracking-tight">MENU & COORDONNÉES</p>
               </div>
 
@@ -279,7 +285,7 @@ export default function QRCodeGenerator() {
               const tableNum = i + 1;
               const url = getClientUrl(tableNum);
               return (
-                <TableQRCard key={tableNum} tableNumber={tableNum} targetUrl={url} qrColor={qrColor} />
+                <TableQRCard key={tableNum} tableNumber={tableNum} targetUrl={url} qrColor={qrColor} restaurantLogo={restaurantLogo} restaurantName={displayName} />
               );
             })}
           </div>
@@ -295,10 +301,13 @@ interface TableQRCardProps {
   tableNumber: number;
   targetUrl: string;
   qrColor: string;
+  restaurantLogo?: string;
+  restaurantName?: string;
 }
 
-function TableQRCard({ tableNumber, targetUrl, qrColor }: TableQRCardProps) {
+function TableQRCard({ tableNumber, targetUrl, qrColor, restaurantLogo, restaurantName }: TableQRCardProps) {
   const cardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const displayName = restaurantName || 'RestoChain';
 
   useEffect(() => {
     if (cardCanvasRef.current) {
@@ -325,8 +334,8 @@ function TableQRCard({ tableNumber, targetUrl, qrColor }: TableQRCardProps) {
     <div className="bg-white border-2 border-slate-200/90 rounded-2xl p-4 flex flex-col items-center text-center justify-between space-y-3 shadow-sm aspect-[4/5] max-w-[210px] mx-auto print-card-break print:shadow-none print:border-slate-800 break-inside-avoid">
       <div className="flex flex-col items-center gap-1 shrink-0">
         {/* Vector SVG representation for ultra high-fidelity printing */}
-        <Logo size="custom" width={30} height={30} className="scale-90" />
-        <h5 className="font-extrabold text-[11px] text-slate-850 tracking-tight leading-none uppercase">YIKÉLI</h5>
+        <Logo size="custom" width={30} height={30} className="scale-90" logoUrl={restaurantLogo} restaurantName={displayName} />
+        <h5 className="font-extrabold text-[11px] text-slate-850 tracking-tight leading-none uppercase">{displayName}</h5>
         <span className="text-[8px] text-slate-500 font-bold font-mono">Restaurant de Djorogobité</span>
       </div>
 

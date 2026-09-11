@@ -1,4 +1,71 @@
-import { Plat, User, Client, Commande, Paiement, Depense, StockEntry } from './types';
+import { Plat, User, Client, Commande, Paiement, Depense, StockEntry, SaaSPricingConfig, RestaurantTenant } from './types';
+
+export const INITIAL_SAAS_PRICING: SaaSPricingConfig = {
+  standardMensuel: 25000,
+  standardAnnuel: 250000,
+  premiumMensuel: 50000,
+  premiumAnnuel: 500000,
+};
+
+export const INITIAL_RESTAURANTS: RestaurantTenant[] = [
+  {
+    id: 'rest-1',
+    name: 'Restaurant Yikéli',
+    logo: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=200&auto=format&fit=crop&q=80',
+    slogan: 'Le goût authentique des saveurs ivoiriennes',
+    address: 'Route d\'Abatta, derrière la pharmacie • Yango Djorogobité 1, Abidjan',
+    managerName: 'Flavien Kouassi',
+    managerPhone: '+225 05 01 14 92 44',
+    managerEmail: 'flavien004@gmail.com',
+    contacts: '+225 05 01 14 92 44 / +225 07 16 61 46 69',
+    whatsapp: '+225 05 01 14 92 44',
+    subscriptionPlan: 'PREMIUM_ANNUEL',
+    subscriptionStartDate: '2026-01-01',
+    subscriptionEndDate: '2026-12-31',
+    status: 'ACTIF',
+    adminUsername: 'admin',
+    adminPassword: 'admin',
+    createdAt: '2026-01-01T08:00:00Z',
+  },
+  {
+    id: 'rest-2',
+    name: 'L\'Espace Maquis Le Jardin',
+    logo: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=200&auto=format&fit=crop&q=80',
+    slogan: 'Spécialités de grillades et poissons frais d\'Abidjan',
+    address: 'Cocody Angré 8ème Tranche, Abidjan',
+    managerName: 'Koffi Emmanuel',
+    managerPhone: '+225 07 08 09 10 11',
+    managerEmail: 'contact@lejardin.ci',
+    contacts: '+225 07 08 09 10 11',
+    whatsapp: '+225 07 08 09 10 11',
+    subscriptionPlan: 'STANDARD_MENSUEL',
+    subscriptionStartDate: '2026-07-01',
+    subscriptionEndDate: '2026-08-31',
+    status: 'ACTIF',
+    adminUsername: 'gerant_jardin',
+    adminPassword: 'password123',
+    createdAt: '2026-02-15T10:00:00Z',
+  },
+  {
+    id: 'rest-3',
+    name: 'Bistro Marcory Saveurs',
+    logo: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=200&auto=format&fit=crop&q=80',
+    slogan: 'L\'excellence gastronomique au cœur de Marcory',
+    address: 'Zone 4 Rue Pierre et Marie Curie, Abidjan',
+    managerName: 'Awa Touré',
+    managerPhone: '+225 01 22 33 44 55',
+    managerEmail: 'a.toure@marcorysaveurs.ci',
+    contacts: '+225 01 22 33 44 55',
+    whatsapp: '+225 01 22 33 44 55',
+    subscriptionPlan: 'PREMIUM_MENSUEL',
+    subscriptionStartDate: '2026-06-01',
+    subscriptionEndDate: '2026-07-01',
+    status: 'EXPIRE',
+    adminUsername: 'gerant_marcory',
+    adminPassword: 'password123',
+    createdAt: '2025-11-10T14:00:00Z',
+  }
+];
 
 export const INITIAL_PLATS: Plat[] = [
   { id: 'p1', name: 'Garba Classique (Attiéké + Thon Frit)', price: 1500, category: 'PLATS_IVOIRIENS', isActive: true, image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop&q=80', buyingCost: 800 },
@@ -25,6 +92,7 @@ export const INITIAL_PLATS: Plat[] = [
 ];
 
 export const INITIAL_USERS: User[] = [
+  { id: 'u0', name: 'Super Admin RestoChain', phone: '+225 00 00 00 00 00', email: 'saas@restochain.ci', role: 'SUPER_ADMIN', isActive: true, createdAt: '2026-01-01T00:00:00Z', username: 'saas', password: 'saas' },
   { id: 'u1', name: 'Flavien Admin', phone: '+225 05 01 14 92 44', email: 'flavien004@gmail.com', role: 'ADMIN', isActive: true, createdAt: '2026-05-10T10:00:00Z', username: 'admin', password: 'admin' },
   { id: 'u2', name: 'Salimata Caisse', phone: '+225 07 16 61 46 69', email: 'salimata@yikeli.com', role: 'EMPLOYE', isActive: true, createdAt: '2026-05-12T08:30:00Z', username: 'salimata', password: 'salimata' },
   { id: 'u3', name: 'Amadou Caisse', phone: '+225 01 02 03 04 05', email: 'amadou@yikeli.com', role: 'EMPLOYE', isActive: true, createdAt: '2026-05-15T09:00:00Z', username: 'amadou', password: 'amadou' }

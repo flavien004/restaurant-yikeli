@@ -455,7 +455,7 @@ export default function InteractiveHelpModal({ type, onClose }: InteractiveHelpM
                 <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100 space-y-3.5">
                   <div className="flex items-center gap-2">
                     <BookOpen className="w-4 h-4 text-orange-600" />
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-600">Simulateur d'aide Interactive</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-600">Assistant d'Aide Intelligente</span>
                   </div>
                   
                   <p className="text-xs font-bold text-slate-800 bg-white p-3 rounded-xl border border-slate-150 shadow-xs leading-normal">

@@ -29,6 +29,7 @@ import {
   Smile,
   XCircle,
   Camera,
+  RotateCw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -398,10 +399,13 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
     }
 
     const typeDesc = order.type === 'SUR_PLACE' ? `SUR PLACE (Table ${order.tableNumber}) 🍽️` : 'EN LIGNE 🛵';
+    const restName = db.activeRestaurant?.name || 'Restaurant';
 
-    const textMsg = `Bonjour *Restaurant Yikéli*,%0A%0AJe viens de valider une commande *${typeDesc}* !%0A%0A*ID Commande:* ${order.id}%0A*Nom:* ${clientNameStr}%0A*Téléphone:* ${clientPhoneStr}%0A*Plats commandés:*%5A%0A${dishesStr}${commentLine}%0A%0A*Total:* ${formatFCFA(order.total)}%0A*Mode de règlement :* ${paymentReport}%0A%0AMerci de préparer ma commande !`;
+    const textMsg = `Bonjour *${restName}*,%0A%0AJe viens de valider une commande *${typeDesc}* !%0A%0A*ID Commande:* ${order.id}%0A*Nom:* ${clientNameStr}%0A*Téléphone:* ${clientPhoneStr}%0A*Plats commandés:*%5A%0A${dishesStr}${commentLine}%0A%0A*Total:* ${formatFCFA(order.total)}%0A*Mode de règlement :* ${paymentReport}%0A%0AMerci de préparer ma commande !`;
     return `https://wa.me/${number.replace(/[^0-9]/g, '')}?text=${textMsg}`;
   };
+
+  const activeRest = db.activeRestaurant;
 
   return (
     <div className="max-w-xl mx-auto space-y-6 pb-20" id="client-view-parent">
@@ -415,7 +419,7 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
 
         <div className="flex justify-center relative z-10">
           <div className="flex flex-col items-center gap-2">
-            <Logo size="md" className="bg-white p-2 rounded-2xl shadow-lg max-w-[125px]" />
+            <Logo size="md" logoUrl={activeRest?.logo} restaurantName={activeRest?.name} className="bg-white p-2 rounded-2xl shadow-lg max-w-[125px]" />
             <div className="flex flex-wrap justify-center gap-2 mt-1">
               <button
                 type="button"
@@ -433,6 +437,21 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
               >
                 <HelpCircle className="w-3.5 h-3.5 text-yellow-300" />
                 Aide ❓
+              </button>
+
+              <button
+                type="button"
+                onClick={() => db.forceManualRefresh && db.forceManualRefresh()}
+                disabled={db.isSyncing}
+                className={`${
+                  db.isSyncing
+                    ? 'bg-amber-500/90 text-white animate-pulse'
+                    : 'bg-white/20 hover:bg-white/35 text-white'
+                } font-extrabold text-[10px] px-3.5 py-1.5 rounded-full border border-white/20 shadow-sm transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider h-7`}
+                title="Sychroniser la carte et le statut des commandes"
+              >
+                <RotateCw className={`w-3.5 h-3.5 text-yellow-300 ${db.isSyncing ? 'animate-spin' : ''}`} />
+                {db.isSyncing ? 'Synchro...' : 'Synchro 🔄'}
               </button>
 
               <button
@@ -465,10 +484,10 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
 
         <div className="space-y-1 relative">
           <span className="text-[10px] font-extrabold uppercase tracking-widest bg-yellow-450/40 text-yellow-100 px-3 py-1 rounded-full border border-yellow-200/20">
-            Abidjan • Route d'Abatta
+            {activeRest?.address || "Côte d'Ivoire"}
           </span>
-          <h1 className="text-3xl font-extrabold tracking-tight mt-1">Restaurant Yikéli</h1>
-          <p className="text-orange-50 text-xs font-medium">Commandez nos spécialités en prêt-à-servir de Côte d'Ivoire !</p>
+          <h1 className="text-3xl font-extrabold tracking-tight mt-1">{activeRest?.name || 'Restaurant'}</h1>
+          <p className="text-orange-50 text-xs font-medium">{activeRest?.slogan || "Commandez nos spécialités en prêt-à-servir de Côte d'Ivoire !"}</p>
         </div>
 
         <div className="bg-orange-600/50 rounded-2xl p-3.5 border border-orange-400/30 grid grid-cols-2 text-left gap-2 text-xs divide-x divide-orange-400/20">
@@ -476,14 +495,14 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
             <Clock className="w-4 h-4 text-orange-200" />
             <div>
               <span className="text-orange-200 block text-[9px] font-bold uppercase tracking-wider">Service disponible</span>
-              <span className="font-semibold block text-[11px]">Tous les jours d'Abatta</span>
+              <span className="font-semibold block text-[11px]">Tous les jours &bull; 08h - 22h</span>
             </div>
           </div>
           <div className="pl-3 flex items-center gap-2">
             <MapPin className="w-4 h-4 text-orange-200" />
-            <div>
-              <span className="text-orange-200 block text-[9px] font-bold uppercase tracking-wider">Adresse Yango</span>
-              <span className="font-semibold block text-[11px]">Djorogobité 1 • N° 206</span>
+            <div className="overflow-hidden">
+              <span className="text-orange-200 block text-[9px] font-bold uppercase tracking-wider">Adresse &amp; Contact</span>
+              <span className="font-semibold block text-[11px] truncate">{activeRest?.address}</span>
             </div>
           </div>
         </div>
@@ -1020,37 +1039,39 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
 
               {/* Action Buttons to contact on WhatsApp directly */}
               <div className="bg-slate-50 p-4 rounded-2xl border space-y-3">
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 block">Confirmer d'Abatta via WhatsApp</span>
-                <p className="text-xs text-gray-505 leading-relaxed">
-                  Pour obtenir une confirmation cuite immédiate ou renseigner votre ruelle de livraison préférée, touchez l'un de nos numéros Yikéli ci-dessous. Le message de votre panier sera pré-rempli !
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-gray-400 block">Confirmer la Commande via WhatsApp</span>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Pour obtenir une confirmation immédiate ou renseigner votre adresse de livraison préférée, touchez l'un des numéros de <strong>{activeRest?.name}</strong> ci-dessous. Le message de votre panier sera pré-rempli !
                 </p>
 
                 <div className="grid grid-cols-1 gap-2.5">
                   <a
-                    href={getWhatsAppLink(placedOrderInfo, '+225 05 01 14 92 44')}
+                    href={getWhatsAppLink(placedOrderInfo, activeRest?.whatsapp || activeRest?.managerPhone || '+22500000000')}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl transition font-bold text-xs text-green-750"
                   >
                     <div className="flex items-center gap-2">
                       <MessageSquare className="w-4 h-4 text-green-600 shrink-0" />
-                      <span>WhatsApp N°1 (Allo 1)</span>
+                      <span>WhatsApp Officiel ({activeRest?.name})</span>
                     </div>
-                    <span className="font-mono text-[10px]">+225 05 01 14 92 44</span>
+                    <span className="font-mono text-[10px]">{activeRest?.whatsapp || activeRest?.managerPhone}</span>
                   </a>
 
-                  <a
-                    href={getWhatsAppLink(placedOrderInfo, '+225 07 16 61 46 69')}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl transition font-bold text-xs text-green-750"
-                  >
-                    <div className="flex items-center gap-2">
-                      <MessageSquare className="w-4 h-4 text-green-600 shrink-0" />
-                      <span>WhatsApp N°2 (Allo 2)</span>
-                    </div>
-                    <span className="font-mono text-[10px]">+225 07 16 61 46 69</span>
-                  </a>
+                  {activeRest?.managerPhone && activeRest?.managerPhone !== activeRest?.whatsapp && (
+                    <a
+                      href={getWhatsAppLink(placedOrderInfo, activeRest?.managerPhone)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl transition font-bold text-xs text-green-750"
+                    >
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-green-600 shrink-0" />
+                        <span>Ligne Directe Gérance</span>
+                      </div>
+                      <span className="font-mono text-[10px]">{activeRest?.managerPhone}</span>
+                    </a>
+                  )}
                 </div>
               </div>
 
@@ -1146,7 +1167,7 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                     const steps = [
                       { label: initialStepLabel, desc: initialStepDesc, active: true, matching: ['EN_COURS', 'ATTENTE_PAIEMENT'] },
                       { label: 'Prêt / Servi 🍽️', desc: 'Prêt sur table ou emballé', active: ['SERVIE', 'PRET_A_LIVRER', 'EN_LIVRAISON', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['SERVIE', 'PRET_A_LIVRER'] },
-                      { label: 'En Route 🛵', desc: 'Remis au livreur de Djorogobité/Yango', active: ['EN_LIVRAISON', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['EN_LIVRAISON'] },
+                      { label: 'En Route 🛵', desc: 'Remis au livreur / Yango', active: ['EN_LIVRAISON', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['EN_LIVRAISON'] },
                       { label: 'Livrée avec succès 🎉', desc: 'Régalez-vous !', active: ['LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['LIVREE', 'PAYEE', 'REFUS_ANNULATION'] }
                     ];
 

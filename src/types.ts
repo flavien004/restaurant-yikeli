@@ -1,4 +1,35 @@
-export type UserRole = 'ADMIN' | 'EMPLOYE';
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'EMPLOYE';
+
+export type SaaSPlanType = 'STANDARD' | 'PREMIUM';
+export type SaaSBillingCycle = 'MENSUEL' | 'ANNUEL';
+export type SaaSPlanKey = 'STANDARD_MENSUEL' | 'STANDARD_ANNUEL' | 'PREMIUM_MENSUEL' | 'PREMIUM_ANNUEL';
+
+export interface SaaSPricingConfig {
+  standardMensuel: number;
+  standardAnnuel: number;
+  premiumMensuel: number;
+  premiumAnnuel: number;
+}
+
+export interface RestaurantTenant {
+  id: string;
+  name: string;                  // Nom du restaurant
+  logo: string;                  // Logo (URL ou Base64)
+  slogan: string;                // Slogan
+  address: string;               // Adresse physique
+  managerName: string;           // Nom du gérant
+  managerPhone: string;          // Contact du gérant
+  managerEmail: string;          // Mail du gérant
+  contacts: string;              // Contacts téléphone
+  whatsapp: string;              // WhatsApp
+  subscriptionPlan: SaaSPlanKey; // Abonnement choisi
+  subscriptionStartDate: string; // Date de début YYYY-MM-DD
+  subscriptionEndDate: string;   // Date de fin YYYY-MM-DD
+  status: 'ACTIF' | 'EXPIRE' | 'SUSPENDU';
+  adminUsername: string;         // Identifiant d'accès du gérant
+  adminPassword: string;         // Mot de passe du gérant
+  createdAt: string;
+}
 
 export interface User {
   id: string;

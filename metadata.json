@@ -1,6 +1,6 @@
 {
-  "name": "Restaurant Yikéli",
-  "description": "Application PWA installable et résistante au hors-ligne pour le Restaurant Yikéli : commandes en ligne, point de vente (POS) tactile pour les employés, suivi de la caisse physique et administration.",
+  "name": "RestoChain",
+  "description": "Plateforme SaaS Multi-Restaurants RestoChain : commandes client en ligne, POS tactile, suivi de trésorerie, caisse et gestion multi-établissements.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

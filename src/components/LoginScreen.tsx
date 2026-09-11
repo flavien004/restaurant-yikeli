@@ -6,15 +6,17 @@ import { Shield, KeyRound, User as UserIcon, LogIn, CheckCircle2, AlertCircle } 
 interface LoginScreenProps {
   users: User[];
   onLoginSuccess: (user: User) => void;
-  requiredRole: 'ADMIN' | 'EMPLOYE';
+  requiredRole: 'SUPER_ADMIN' | 'ADMIN' | 'EMPLOYE';
+  restaurantName?: string;
+  restaurantLogo?: string;
 }
 
-export default function LoginScreen({ users, onLoginSuccess, requiredRole }: LoginScreenProps) {
+export default function LoginScreen({ users, onLoginSuccess, requiredRole, restaurantName = 'RestoChain', restaurantLogo }: LoginScreenProps) {
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Auto-filtering active users for quick-login helpers - only cashiers for employees
+  // Filtering active users
   const activeStaff = users.filter(
     (u) =>
       u.role === requiredRole &&
@@ -58,30 +60,50 @@ export default function LoginScreen({ users, onLoginSuccess, requiredRole }: Log
         <div className="absolute inset-0 bg-gradient-to-tr from-orange-600/20 to-transparent pointer-events-none"></div>
         
         <div className="flex justify-center relative">
-          <Logo size="lg" width={72} height={72} className="bg-white p-1.5 rounded-full shadow-lg" />
+          <Logo
+            size="lg"
+            logoUrl={requiredRole === 'SUPER_ADMIN' ? undefined : restaurantLogo}
+            restaurantName={requiredRole === 'SUPER_ADMIN' ? 'RestoChain' : restaurantName}
+            width={72}
+            height={72}
+            className="bg-white p-1.5 rounded-full shadow-lg"
+          />
         </div>
         
         <div className="space-y-1 relative">
-          <h2 className="text-xl font-extrabold uppercase tracking-wider font-sans">Restaurant Yikéli</h2>
+          <h2 className="text-xl font-extrabold uppercase tracking-wider font-sans">
+            {requiredRole === 'SUPER_ADMIN' ? 'RestoChain SaaS' : restaurantName}
+          </h2>
           <p className="text-xs text-orange-450 font-mono tracking-widest uppercase">
-            {requiredRole === 'ADMIN' ? 'Espace Administrateur' : 'Espace Caisse & POS'}
+            {requiredRole === 'SUPER_ADMIN'
+              ? 'Plateforme RestoChain Super Admin'
+              : requiredRole === 'ADMIN'
+              ? 'Bureau Gérant & Direction'
+              : 'Espace Caisse & POS'}
           </p>
         </div>
       </div>
 
       <div className="p-6 sm:p-8 space-y-6">
-        {requiredRole === 'ADMIN' ? (
+        {requiredRole === 'SUPER_ADMIN' ? (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-indigo-950">
+            <Shield className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Super Admin RestoChain :</span> Connectez-vous avec les identifiants de la plateforme (Identifiant: <code className="bg-indigo-100 px-1 py-0.5 rounded font-mono font-bold">saas</code> • Mot de passe: <code className="bg-indigo-100 px-1 py-0.5 rounded font-mono font-bold">saas</code>) pour gérer tous les restaurants et abonnements.
+            </div>
+          </div>
+        ) : requiredRole === 'ADMIN' ? (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-amber-950">
             <Shield className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold">Espace Restreint :</span> Seul le gérant ou l'administrateur peut se connecter pour consulter les finances et ajuster le menu.
+              <span className="font-bold">Espace Restreint Gérant :</span> Connectez-vous pour configurer l'établissement, ajuster la carte et suivre les recettes.
             </div>
           </div>
         ) : (
           <div className="bg-orange-50/50 border border-orange-100 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-orange-950">
             <LogIn className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold">Espace Serveur / Caissier :</span> Connectez-vous avec vos identifiants caissier pour prendre les commandes de la clientèle.
+              <span className="font-bold">Espace Serveur / Caissier :</span> Connectez-vous avec vos identifiants caissier pour enregistrer les commandes.
             </div>
           </div>
         )}
@@ -102,7 +124,7 @@ export default function LoginScreen({ users, onLoginSuccess, requiredRole }: Log
             <input
               type="text"
               required
-              placeholder="Ex: salimata"
+              placeholder={requiredRole === 'SUPER_ADMIN' ? 'saas' : 'Identifiant'}
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
               className="w-full bg-slate-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
@@ -117,7 +139,7 @@ export default function LoginScreen({ users, onLoginSuccess, requiredRole }: Log
             <input
               type="password"
               required
-              placeholder="Votre mot de passe"
+              placeholder="Mot de passe"
               value={passwordInput}
               onChange={(e) => setPasswordInput(e.target.value)}
               className="w-full bg-slate-50 border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
@@ -132,11 +154,11 @@ export default function LoginScreen({ users, onLoginSuccess, requiredRole }: Log
           </button>
         </form>
 
-        {/* Quick Credentials Prefill Section representing thoughtful assistance */}
+        {/* Staff credentials prefill for convenience */}
         {activeStaff.length > 0 && (
           <div className="border-t border-gray-150 pt-4 space-y-2.5">
             <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">
-              Comptes Démo (Yikéli Abidjan)
+              Sélection Rapide d'un Compte
             </span>
             <div className="flex flex-col gap-1.5">
               {activeStaff.map((u) => (
@@ -149,7 +171,7 @@ export default function LoginScreen({ users, onLoginSuccess, requiredRole }: Log
                   <div>
                     <span className="font-bold text-gray-800">{u.name}</span>
                     <span className="text-[10px] text-gray-400 block font-mono">
-                      Login : {u.username} • Pass : {u.password}
+                      Login : {u.username}
                     </span>
                   </div>
                   <CheckCircle2 className="w-4 h-4 text-orange-400 shrink-0" />

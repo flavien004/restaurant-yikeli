@@ -5,9 +5,11 @@ interface LogoProps {
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'custom';
   width?: number;
   height?: number;
+  logoUrl?: string;
+  restaurantName?: string;
 }
 
-export default function Logo({ className = '', size = 'md', width, height }: LogoProps) {
+export default function Logo({ className = '', size = 'md', width, height, logoUrl, restaurantName }: LogoProps) {
   // Compute dimensions based on size presets if width/height are not provided
   let defaultWidth = 120;
   let defaultHeight = 120;
@@ -28,6 +30,24 @@ export default function Logo({ className = '', size = 'md', width, height }: Log
 
   const finalWidth = width || defaultWidth;
   const finalHeight = height || defaultHeight;
+  const displayName = restaurantName || 'Yikéli';
+
+  if (logoUrl && logoUrl.trim() !== '') {
+    return (
+      <div className={`flex items-center justify-center ${className}`}>
+        <img
+          src={logoUrl}
+          alt={displayName}
+          style={{ width: finalWidth, height: finalHeight, objectFit: 'contain' }}
+          className="max-w-full h-auto select-none rounded-xl"
+          onError={(e) => {
+            // Fallback to SVG if image fails to load
+            (e.target as HTMLElement).style.display = 'none';
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={`flex items-center justify-center ${className}`}>
@@ -89,19 +109,19 @@ export default function Logo({ className = '', size = 'md', width, height }: Log
           />
         </g>
 
-        {/* cursive text: Yikéli */}
+        {/* cursive text: restaurant name */}
         <text
           x="264"
           y="288"
           fontFamily="'Caveat', 'Great Vibes', 'Brush Script MT', 'Dancing Script', 'Playfair Display', cursive"
-          fontSize="112"
+          fontSize={displayName.length > 10 ? '80' : '112'}
           fontWeight="900"
           fill="#ff5a00"
           textAnchor="middle"
           filter="url(#softShadow)"
           style={{ letterSpacing: '-1.5px', transform: 'skewX(-6deg)' }}
         >
-          Yikéli
+          {displayName}
         </text>
 
         {/* Separator Line with Central Diamond */}
