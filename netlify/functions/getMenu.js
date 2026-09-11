@@ -24,15 +24,39 @@ export async function handler(event, context) {
       };
     }
 
-    // Fetch from yikeli_settings
-    const response = await fetch(`${supabaseUrl}/rest/v1/yikeli_settings?id=eq.current`, {
+    const queryParams = event.queryStringParameters || {};
+    const restaurantId = (
+      queryParams.restaurantId ||
+      queryParams.restaurant_id ||
+      event.headers["x-restaurant-id"] ||
+      "rest-1"
+    ).trim();
+
+    const authHeader = event.headers["authorization"] || `Bearer ${supabaseKey}`;
+
+    // Chercher d'abord la clé spécifique au restaurant `settings-${restaurantId}`, puis repli
+    let response = await fetch(`${supabaseUrl}/rest/v1/yikeli_settings?id=eq.settings-${encodeURIComponent(restaurantId)}`, {
       method: "GET",
       headers: {
         "apikey": supabaseKey,
-        "Authorization": `Bearer ${supabaseKey}`,
+        "Authorization": authHeader,
+        "x-restaurant-id": restaurantId,
         "Content-Type": "application/json",
       }
     });
+
+    if (!response.ok || (await response.clone().json()).length === 0) {
+      // Repli sur l'identifiant simple si nécessaire
+      response = await fetch(`${supabaseUrl}/rest/v1/yikeli_settings?id=eq.${encodeURIComponent(restaurantId)}`, {
+        method: "GET",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": authHeader,
+          "x-restaurant-id": restaurantId,
+          "Content-Type": "application/json",
+        }
+      });
+    }
 
     if (!response.ok) {
       // If table doesn't exist yet, return empty gracefully to avoid crash

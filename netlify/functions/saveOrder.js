@@ -27,6 +27,16 @@ export async function handler(event, context) {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
+    // Isolation Multi-Tenant : déterminer l'identifiant du restaurant
+    const queryParams = event.queryStringParameters || {};
+    const restaurantId = (
+      order.restaurantId ||
+      order.restaurant_id ||
+      queryParams.restaurantId ||
+      event.headers["x-restaurant-id"] ||
+      "rest-1"
+    ).trim();
+
     if (!supabaseUrl || !supabaseKey) {
       console.warn("Supabase credentials are not set on Netlify environment variables.");
       return {
@@ -43,9 +53,12 @@ export async function handler(event, context) {
       };
     }
 
-    // Format fields to match table columns
+    const authHeader = event.headers["authorization"] || `Bearer ${supabaseKey}`;
+
+    // Format fields to match table columns with mandatory restaurant_id
     const record = {
       id: order.id,
+      restaurant_id: restaurantId,
       client_id: order.clientId || "",
       client_name: order.clientName || null,
       client_phone: order.clientPhone || null,
@@ -53,7 +66,7 @@ export async function handler(event, context) {
       total: Number(order.total),
       type: order.type,
       status: order.status,
-      created_at: order.createdAt,
+      created_at: order.createdAt || new Date().toISOString(),
       comment: order.comment || null,
       table_number: order.tableNumber || null,
       cancel_reason: order.cancelReason || null,
@@ -69,7 +82,8 @@ export async function handler(event, context) {
       method: "POST",
       headers: {
         "apikey": supabaseKey,
-        "Authorization": `Bearer ${supabaseKey}`,
+        "Authorization": authHeader,
+        "x-restaurant-id": restaurantId,
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates" // acts as an upsert!
       },

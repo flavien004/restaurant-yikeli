@@ -92,10 +92,10 @@ export const INITIAL_PLATS: Plat[] = [
 ];
 
 export const INITIAL_USERS: User[] = [
-  { id: 'u0', name: 'Super Admin RestoChain', phone: '+225 00 00 00 00 00', email: 'saas@restochain.ci', role: 'SUPER_ADMIN', isActive: true, createdAt: '2026-01-01T00:00:00Z', username: 'saas', password: 'saas' },
-  { id: 'u1', name: 'Flavien Admin', phone: '+225 05 01 14 92 44', email: 'flavien004@gmail.com', role: 'ADMIN', isActive: true, createdAt: '2026-05-10T10:00:00Z', username: 'admin', password: 'admin' },
-  { id: 'u2', name: 'Salimata Caisse', phone: '+225 07 16 61 46 69', email: 'salimata@yikeli.com', role: 'EMPLOYE', isActive: true, createdAt: '2026-05-12T08:30:00Z', username: 'salimata', password: 'salimata' },
-  { id: 'u3', name: 'Amadou Caisse', phone: '+225 01 02 03 04 05', email: 'amadou@yikeli.com', role: 'EMPLOYE', isActive: true, createdAt: '2026-05-15T09:00:00Z', username: 'amadou', password: 'amadou' }
+  { id: 'u0', name: 'Super Admin RestoChain', phone: '+225 00 00 00 00 00', email: 'saas@restochain.ci', role: 'SUPER_ADMIN', isActive: true, createdAt: '2026-01-01T00:00:00Z', username: 'saas', password: 'ChangeMe_SaaS2026!' },
+  { id: 'u1', name: 'Direction Générale (Gérant)', phone: '+225 27 20 00 00 00', email: 'direction@restaurant-demo.ci', role: 'ADMIN', isActive: true, createdAt: '2026-05-10T10:00:00Z', username: 'admin', password: 'ChangeMe_Admin2026!' },
+  { id: 'u2', name: 'Caissière Principale', phone: '+225 07 00 00 00 02', email: 'caisse1@restaurant-demo.ci', role: 'EMPLOYE', poste: 'Caissière', isActive: true, createdAt: '2026-05-12T08:30:00Z', username: 'caisse1', password: 'ChangeMe_Caisse2026!' },
+  { id: 'u3', name: 'Serveur Polyvalent', phone: '+225 07 00 00 00 03', email: 'caisse2@restaurant-demo.ci', role: 'EMPLOYE', poste: 'Serveur / Caisse', isActive: true, createdAt: '2026-05-15T09:00:00Z', username: 'caisse2', password: 'ChangeMe_Caisse2026!' }
 ];
 
 export const INITIAL_CLIENTS: Client[] = [];

@@ -20,9 +20,32 @@ export interface ConnectionTestResult {
 const STORAGE_KEY_URL = 'restochain_supabase_url';
 const STORAGE_KEY_ANON_KEY = 'restochain_supabase_anon_key';
 
+// Clés globales pour singleton résistant au HMR et aux rechargements
+const GLOBAL_CLIENT_KEY = '__yikeli_supabase_client__';
+const GLOBAL_URL_KEY = '__yikeli_supabase_url__';
+const GLOBAL_ANON_KEY = '__yikeli_supabase_anon__';
+
 let cachedClient: SupabaseClient | null = null;
 let lastConfigUrl = '';
 let lastConfigKey = '';
+
+function getCachedClient(): SupabaseClient | null {
+  if (typeof globalThis !== 'undefined' && (globalThis as any)[GLOBAL_CLIENT_KEY]) {
+    return (globalThis as any)[GLOBAL_CLIENT_KEY];
+  }
+  return cachedClient;
+}
+
+function setCachedClient(client: SupabaseClient | null, url: string, key: string): void {
+  cachedClient = client;
+  lastConfigUrl = url;
+  lastConfigKey = key;
+  if (typeof globalThis !== 'undefined') {
+    (globalThis as any)[GLOBAL_CLIENT_KEY] = client;
+    (globalThis as any)[GLOBAL_URL_KEY] = url;
+    (globalThis as any)[GLOBAL_ANON_KEY] = key;
+  }
+}
 
 /**
  * Récupère la configuration Supabase actuelle (depuis localStorage ou les variables d'environnement Netlify / Vite)
@@ -44,21 +67,24 @@ export function getSupabaseConfig(): SupabaseConfig {
   const envUrl = (metaEnv.VITE_SUPABASE_URL || '').trim();
   const envKey = (metaEnv.VITE_SUPABASE_ANON_KEY || '').trim();
 
-  if (storedUrl && storedKey) {
-    return {
-      url: storedUrl,
-      anonKey: storedKey,
-      isConfigured: true,
-      source: 'localStorage',
-    };
-  }
-
+  // Priorité absolue aux variables d'environnement de production (Netlify / hosting)
+  // pour empêcher qu'un stockage local ou un tiers ne détourne les requêtes de l'application
   if (envUrl && envKey) {
     return {
       url: envUrl,
       anonKey: envKey,
       isConfigured: true,
       source: 'env',
+    };
+  }
+
+  // Repli sur le stockage local uniquement si aucune variable d'environnement n'est définie (mode test/dev)
+  if (storedUrl && storedKey) {
+    return {
+      url: storedUrl,
+      anonKey: storedKey,
+      isConfigured: true,
+      source: 'localStorage',
     };
   }
 
@@ -77,6 +103,9 @@ export function saveSupabaseConfig(url: string, anonKey: string): void {
   const cleanUrl = url.trim();
   const cleanKey = anonKey.trim();
 
+  const prevConfig = getSupabaseConfig();
+  const hasChanged = prevConfig.url !== cleanUrl || prevConfig.anonKey !== cleanKey;
+
   if (typeof window !== 'undefined') {
     if (cleanUrl && cleanKey) {
       localStorage.setItem(STORAGE_KEY_URL, cleanUrl);
@@ -87,25 +116,32 @@ export function saveSupabaseConfig(url: string, anonKey: string): void {
     }
   }
 
-// Invalider le client en cache pour réinitialisation
-  cachedClient = null;
-  lastConfigUrl = '';
-  lastConfigKey = '';
+  // Ne détruire le client en cache QUE si l'URL ou la clé a réellement changé
+  if (hasChanged) {
+    const existing = getCachedClient();
+    if (existing) {
+      try {
+        existing.removeAllChannels();
+        existing.realtime?.disconnect();
+      } catch {
+        // Ignorer les erreurs éventuelles de déconnexion
+      }
+    }
+    setCachedClient(null, '', '');
+  }
 }
 
 let currentTenantId = 'rest-1';
 
 /**
  * Configure le tenant/restaurant actif pour l'isolation multi-restaurant (en-tête HTTP x-restaurant-id)
+ * Note: L'en-tête est injecté dynamiquement dans chaque requête via global.fetch,
+ * ce qui évite de réinstancier GoTrueClient et prévient l'avertissement "Multiple GoTrueClient instances".
  */
 export function setActiveRestaurantTenant(restaurantId: string): void {
   const cleanId = (restaurantId || '').trim();
-  if (cleanId && currentTenantId !== cleanId) {
+  if (cleanId) {
     currentTenantId = cleanId;
-    // Réinitialiser le client pour injecter le nouvel en-tête x-restaurant-id
-    cachedClient = null;
-    lastConfigUrl = '';
-    lastConfigKey = '';
   }
 }
 
@@ -122,19 +158,39 @@ export function getSupabaseClient(): SupabaseClient | null {
     return null;
   }
 
-  if (cachedClient && lastConfigUrl === config.url && lastConfigKey === config.anonKey) {
-    return cachedClient;
+  const existing = getCachedClient();
+  const existingUrl = (typeof globalThis !== 'undefined' && (globalThis as any)[GLOBAL_URL_KEY]) || lastConfigUrl;
+  const existingKey = (typeof globalThis !== 'undefined' && (globalThis as any)[GLOBAL_ANON_KEY]) || lastConfigKey;
+
+  if (existing && existingUrl === config.url && existingKey === config.anonKey) {
+    return existing;
   }
 
   try {
-    cachedClient = createClient(config.url, config.anonKey, {
+    if (existing) {
+      try {
+        existing.removeAllChannels();
+        existing.realtime?.disconnect();
+      } catch {
+        // Ignorer
+      }
+    }
+
+    const client = createClient(config.url, config.anonKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storageKey: `yikeli_auth_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       },
       global: {
         headers: {
           'x-restaurant-id': currentTenantId || 'rest-1',
+        },
+        fetch: (input, init) => {
+          const headers = new Headers(init?.headers);
+          headers.set('x-restaurant-id', currentTenantId || 'rest-1');
+          return fetch(input, { ...init, headers });
         },
       },
       realtime: {
@@ -143,9 +199,9 @@ export function getSupabaseClient(): SupabaseClient | null {
         },
       },
     });
-    lastConfigUrl = config.url;
-    lastConfigKey = config.anonKey;
-    return cachedClient;
+
+    setCachedClient(client, config.url, config.anonKey);
+    return client;
   } catch (err) {
     console.error('Erreur lors de l\'initialisation du client Supabase:', err);
     return null;
@@ -267,15 +323,16 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- 1. FONCTIONS DE SÉCURITÉ ET D'ISOLATION MULTI-TENANTS
 -- -----------------------------------------------------------------------------
 
--- Fonction pour lire le tenant actif depuis l'en-tête HTTP custom x-restaurant-id ou le token JWT
+-- Fonction pour lire le tenant actif en privilégiant le token JWT signé (infalsifiable), puis le setting de session, puis l'en-tête
 CREATE OR REPLACE FUNCTION public.current_restaurant_id()
 RETURNS TEXT AS $$
 BEGIN
   RETURN COALESCE(
-    current_setting('request.headers', true)::json->>'x-restaurant-id',
-    current_setting('app.current_restaurant_id', true),
     auth.jwt()->'app_metadata'->>'restaurant_id',
-    auth.jwt()->'user_metadata'->>'restaurant_id'
+    auth.jwt()->'user_metadata'->>'restaurant_id',
+    auth.jwt()->>'restaurant_id',
+    current_setting('app.current_restaurant_id', true),
+    current_setting('request.headers', true)::json->>'x-restaurant-id'
   );
 EXCEPTION WHEN OTHERS THEN
   RETURN NULL;

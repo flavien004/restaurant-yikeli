@@ -681,10 +681,6 @@ export default function SuperAdminSaaS({
                         <Phone className="w-3 h-3 text-slate-400 shrink-0" />
                         {r.managerPhone}
                       </div>
-                      <div className="pt-1 text-[11px] font-mono text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-100 flex items-center justify-between">
-                        <span>Identifiant: <strong>{r.adminUsername}</strong></span>
-                        <span className="text-slate-400">Pswd: ••••</span>
-                      </div>
                     </div>
 
                     {/* Contacts & Subscription Info */}
@@ -960,7 +956,7 @@ export default function SuperAdminSaaS({
                     <input
                       type="text"
                       required
-                      placeholder="admin"
+                      placeholder="ex: gerant_restaurant"
                       value={formData.adminUsername}
                       onChange={(e) => setFormData({ ...formData, adminUsername: e.target.value })}
                       className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"

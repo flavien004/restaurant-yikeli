@@ -560,7 +560,12 @@ export function useYikeliDb() {
   };
 
   const saveAndSetUsers = (newUsers: User[]) => {
-    localStorage.setItem('yikeli_users', JSON.stringify(newUsers));
+    // Sécurité stricte : Ne JAMAIS stocker les mots de passe en clair dans le localStorage
+    const sanitizedUsers = newUsers.map((u) => {
+      const { password, ...safeUser } = u as any;
+      return safeUser;
+    });
+    localStorage.setItem('yikeli_users', JSON.stringify(sanitizedUsers));
     setUsers(newUsers);
     newUsers.forEach((u) => {
       syncUserToSupabase(u, activeRestaurantId).catch(() => {});
@@ -1794,15 +1799,27 @@ export function useYikeliDb() {
   const [lastBackupTime, setLastBackupTime] = useState<string>('');
   const [isBackupSuccess, setIsBackupSuccess] = useState<boolean>(false);
 
-  // Auto-sauvegarde automatique périodique complète de tous les états (toutes les 15 secondes)
+  // Sauvegarde automatique périodique réservée aux terminaux de gestion (jamais sur l'appareil client du menu QR)
   useEffect(() => {
     if (plats.length === 0 && commandes.length === 0) return;
 
+    // Détection stricte du mode client public : aucune sauvegarde locale de données administratives sur les smartphones des clients
+    const isClientMode = typeof window !== 'undefined' && (
+      window.location.search.includes('view=client') ||
+      window.location.hash.includes('client')
+    );
+    if (isClientMode) return;
+
     const runPeriodicBackupState = () => {
       try {
+        const sanitizedUsers = users.map((u) => {
+          const { password, ...safeUser } = u as any;
+          return safeUser;
+        });
+
         const fullDatabaseSnapshot = {
           plats,
-          users,
+          users: sanitizedUsers,
           clients,
           commandes,
           paiements,
@@ -1815,12 +1832,11 @@ export function useYikeliDb() {
           backupAt: new Date().toISOString()
         };
 
-        // Sauvegarde de secours principale
+        // Sauvegarde de secours principale (données assainies sans identifiants sensibles)
         localStorage.setItem('yikeli_full_backup_system', JSON.stringify(fullDatabaseSnapshot));
 
-        // Sauvegardes de secours granulaires sous-jacentes
+        // Sauvegardes de secours granulaires sous-jacentes (aucun mot de passe exporté)
         localStorage.setItem('yikeli_plats_backup', JSON.stringify(plats));
-        localStorage.setItem('yikeli_users_backup', JSON.stringify(users));
         localStorage.setItem('yikeli_clients_backup', JSON.stringify(clients));
         localStorage.setItem('yikeli_commandes_backup', JSON.stringify(commandes));
         localStorage.setItem('yikeli_paiements_backup', JSON.stringify(paiements));
@@ -1832,20 +1848,26 @@ export function useYikeliDb() {
         setIsBackupSuccess(true);
         setTimeout(() => setIsBackupSuccess(false), 3000);
       } catch (err) {
-        console.error('Échec de la sauvegarde automatique périodique dans le localStorage:', err);
+        console.error('Échec de la sauvegarde périodique dans le localStorage:', err);
       }
     };
 
-    const interval = setInterval(runPeriodicBackupState, 15000);
+    // Période ajustée à 60s pour soulager le processeur et la mémoire
+    const interval = setInterval(runPeriodicBackupState, 60000);
     return () => clearInterval(interval);
   }, [plats, users, clients, commandes, paiements, depenses, menuJour, platCategories, paymentMethods, depenseCategories, stockEntries]);
 
   // Manuel Backup Trigger
   const forceManualBackup = () => {
     try {
+      const sanitizedUsers = users.map((u) => {
+        const { password, ...safeUser } = u as any;
+        return safeUser;
+      });
+
       const fullDatabaseSnapshot = {
         plats,
-        users,
+        users: sanitizedUsers,
         clients,
         commandes,
         paiements,

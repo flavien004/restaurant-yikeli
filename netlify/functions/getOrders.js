@@ -6,7 +6,7 @@ export async function handler(event, context) {
       statusCode: 200,
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type, apikey, Authorization",
+        "Access-Control-Allow-Headers": "Content-Type, apikey, Authorization, x-restaurant-id",
         "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
       },
       body: "",
@@ -17,7 +17,29 @@ export async function handler(event, context) {
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-    // If Supabase is not configured, we return an empty array gracefully to avoid crashing the app
+    // Isolation Multi-Tenant : déterminer l'identifiant du restaurant requis
+    const queryParams = event.queryStringParameters || {};
+    const restaurantId = (
+      queryParams.restaurantId ||
+      queryParams.restaurant_id ||
+      event.headers["x-restaurant-id"] ||
+      ""
+    ).trim();
+
+    if (!restaurantId) {
+      return {
+        statusCode: 400,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          error: "Paramètre 'restaurantId' manquant. L'isolation multi-restaurant exige de spécifier l'établissement.",
+        }),
+      };
+    }
+
+    // Si Supabase n'est pas configuré, renvoyer un tableau vide sans crash
     if (!supabaseUrl || !supabaseKey) {
       return {
         statusCode: 200,
@@ -29,14 +51,18 @@ export async function handler(event, context) {
       };
     }
 
-    // Fetch all orders from Supabase table ordered by created_at descending
-    const response = await fetch(`${supabaseUrl}/rest/v1/yikeli_orders?select=*&order=created_at.desc`, {
+    const authHeader = event.headers["authorization"] || `Bearer ${supabaseKey}`;
+
+    // Récupérer uniquement les commandes du restaurant spécifié
+    const endpoint = `${supabaseUrl}/rest/v1/yikeli_orders?restaurant_id=eq.${encodeURIComponent(restaurantId)}&select=*&order=created_at.desc`;
+    const response = await fetch(endpoint, {
       method: "GET",
       headers: {
         "apikey": supabaseKey,
-        "Authorization": `Bearer ${supabaseKey}`,
+        "Authorization": authHeader,
+        "x-restaurant-id": restaurantId,
         "Content-Type": "application/json",
-      }
+      },
     });
 
     if (!response.ok) {
@@ -47,9 +73,10 @@ export async function handler(event, context) {
 
     const data = await response.json();
 
-    // Map columns back to fields expected by the frontend interface
+    // Normalisation des champs pour le frontend
     const formattedOrders = data.map(order => ({
       id: order.id,
+      restaurantId: order.restaurant_id || restaurantId,
       clientId: order.client_id || "",
       clientName: order.client_name || "",
       clientPhone: order.client_phone || "",
