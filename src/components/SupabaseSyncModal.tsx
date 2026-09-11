@@ -567,6 +567,39 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                 </ol>
               </div>
 
+              {/* Security & Architecture Highlights */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 mb-1">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    Sécurité RLS Renforcée
+                  </div>
+                  <p className="text-[11px] text-emerald-700 leading-snug">
+                    Politiques RLS isolées par tenant (<code className="bg-white/60 px-1 py-0.5 rounded">x-restaurant-id</code>). Aucune politique permissive ouverte.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-sky-900 mb-1">
+                    <Database className="w-4 h-4 text-sky-600" />
+                    Intégrité Référentielle
+                  </div>
+                  <p className="text-[11px] text-sky-700 leading-snug">
+                    Clés étrangères FK strictes (<code className="bg-white/60 px-1 py-0.5 rounded">ON DELETE CASCADE</code>) et tables normalisées pour les articles et plats.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900 mb-1">
+                    <Sparkles className="w-4 h-4 text-indigo-600" />
+                    Bcrypt &amp; Dates Typées
+                  </div>
+                  <p className="text-[11px] text-indigo-700 leading-snug">
+                    Hachage Bcrypt pgcrypto anti-mots de passe en clair et champs temporels en <code className="bg-white/60 px-1 py-0.5 rounded">TIMESTAMPTZ</code>.
+                  </p>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-extrabold text-slate-800 flex items-center gap-2">

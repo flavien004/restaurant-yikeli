@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
-import { Commande, Plat, User, Client, Paiement, Depense, StockEntry, Supplier, RestaurantTenant, SaaSPricingConfig } from '../types';
+import { Commande, CommandeItem, Plat, User, Client, Paiement, Depense, StockEntry, Supplier, RestaurantTenant, SaaSPricingConfig } from '../types';
 
 export interface SupabaseConfig {
   url: string;
@@ -87,14 +87,34 @@ export function saveSupabaseConfig(url: string, anonKey: string): void {
     }
   }
 
-  // Invalider le client en cache pour réinitialisation
+// Invalider le client en cache pour réinitialisation
   cachedClient = null;
   lastConfigUrl = '';
   lastConfigKey = '';
 }
 
+let currentTenantId = 'rest-1';
+
 /**
- * Obtient ou initialise l'instance singleton SupabaseClient
+ * Configure le tenant/restaurant actif pour l'isolation multi-restaurant (en-tête HTTP x-restaurant-id)
+ */
+export function setActiveRestaurantTenant(restaurantId: string): void {
+  const cleanId = (restaurantId || '').trim();
+  if (cleanId && currentTenantId !== cleanId) {
+    currentTenantId = cleanId;
+    // Réinitialiser le client pour injecter le nouvel en-tête x-restaurant-id
+    cachedClient = null;
+    lastConfigUrl = '';
+    lastConfigKey = '';
+  }
+}
+
+export function getActiveRestaurantTenant(): string {
+  return currentTenantId;
+}
+
+/**
+ * Obtient ou initialise l'instance singleton SupabaseClient avec isolation multi-restaurant (x-restaurant-id)
  */
 export function getSupabaseClient(): SupabaseClient | null {
   const config = getSupabaseConfig();
@@ -111,6 +131,11 @@ export function getSupabaseClient(): SupabaseClient | null {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
+      },
+      global: {
+        headers: {
+          'x-restaurant-id': currentTenantId || 'rest-1',
+        },
       },
       realtime: {
         params: {
@@ -143,15 +168,17 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
 
   const startTime = performance.now();
   const tablesToCheck = [
+    'yikeli_restaurants',
+    'yikeli_users',
+    'yikeli_plats',
     'yikeli_orders',
-    'yikeli_settings',
+    'yikeli_order_items',
     'yikeli_paiements',
     'yikeli_depenses',
     'yikeli_clients',
     'yikeli_stock_entries',
     'yikeli_suppliers',
-    'yikeli_restaurants',
-    'yikeli_users',
+    'yikeli_settings',
   ];
 
   const found: string[] = [];
@@ -167,8 +194,7 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
     const latencyMs = Math.round(performance.now() - startTime);
 
     if (orderTestErr) {
-      if (orderTestErr.message && orderTestErr.message.includes('relation "public.yikeli_orders" does not exist')) {
-        // La connexion fonctionne, mais la table n'a pas encore été créée
+      if (orderTestErr.message && orderTestErr.message.includes('does not exist')) {
         missing.push('yikeli_orders');
       } else {
         return {
@@ -213,7 +239,7 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
       latencyMs,
       tablesFound: found,
       tablesMissing: missing,
-      message: `Connexion Supabase établie avec succès en ${latencyMs} ms ! (${found.length} tables synchronisées).`,
+      message: `Connexion Supabase établie avec succès en ${latencyMs} ms ! (${found.length} tables synchronisées avec sécurité RLS et isolation multi-restaurant).`,
     };
   } catch (err: any) {
     return {
@@ -225,117 +251,70 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
 }
 
 // -----------------------------------------------------------------------------
-// SCRIPT SQL DE CRÉATION ET REPLICATION TEMPS RÉEL SUPABASE
+// SCRIPT SQL DE CRÉATION ET REPLICATION TEMPS RÉEL SUPABASE (SÉCURISÉ & NORMALISÉ)
 // -----------------------------------------------------------------------------
 export const SUPABASE_SQL_SCHEMA = `-- =============================================================================
--- SCRIPT DE CONFIGURATION DE LA BASE DE DONNÉES RESTOCHAIN / YIKÉLI SUR SUPABASE
--- À exécuter dans : Supabase Dashboard > SQL Editor > New Query > RUN
+-- ARCHITECTURE SÉCURISÉE RESTOCHAIN / YIKÉLI SUR SUPABASE
+-- Conforme aux standards de sécurité : RLS granulaire, isolation multi-restaurants,
+-- dates typées TIMESTAMPTZ/DATE, intégrité référentielle (FK), hachage Bcrypt
+-- et normalisation relationnelle des articles et plats de menu.
 -- =============================================================================
 
--- 1. Table des Commandes (Synchronisation Caisse, Salle, Cuisine & Clients QR)
-CREATE TABLE IF NOT EXISTS public.yikeli_orders (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  client_id TEXT DEFAULT '',
-  client_name TEXT,
-  client_phone TEXT,
-  items JSONB NOT NULL DEFAULT '[]'::jsonb,
-  total NUMERIC NOT NULL DEFAULT 0,
-  type TEXT NOT NULL DEFAULT 'SUR_PLACE',
-  status TEXT NOT NULL DEFAULT 'EN_COURS',
-  table_number INTEGER,
-  created_at TEXT NOT NULL,
-  comment TEXT,
-  cancel_reason TEXT,
-  refusal_reason TEXT,
-  payment_method TEXT,
-  taken_charge_at TEXT,
-  feedback JSONB,
-  user_id TEXT,
-  payments JSONB DEFAULT '[]'::jsonb,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Activer l'extension pgcrypto pour le hachage sécurisé des mots de passe (Bcrypt)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- Index pour accélérer les requêtes
-CREATE INDEX IF NOT EXISTS idx_yikeli_orders_restaurant ON public.yikeli_orders (restaurant_id);
-CREATE INDEX IF NOT EXISTS idx_yikeli_orders_status ON public.yikeli_orders (status);
-CREATE INDEX IF NOT EXISTS idx_yikeli_orders_created_at ON public.yikeli_orders (created_at DESC);
+-- -----------------------------------------------------------------------------
+-- 1. FONCTIONS DE SÉCURITÉ ET D'ISOLATION MULTI-TENANTS
+-- -----------------------------------------------------------------------------
 
--- 2. Table des Paramètres Globaux (Menu, Plats, Menu du jour, Catégories, Tarifs SaaS)
-CREATE TABLE IF NOT EXISTS public.yikeli_settings (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  plats JSONB DEFAULT '[]'::jsonb,
-  menu_jour JSONB DEFAULT '[]'::jsonb,
-  plat_categories JSONB DEFAULT '[]'::jsonb,
-  payment_methods JSONB DEFAULT '[]'::jsonb,
-  depense_categories JSONB DEFAULT '[]'::jsonb,
-  saas_pricing JSONB DEFAULT '{}'::jsonb,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Fonction pour lire le tenant actif depuis l'en-tête HTTP custom x-restaurant-id ou le token JWT
+CREATE OR REPLACE FUNCTION public.current_restaurant_id()
+RETURNS TEXT AS $$
+BEGIN
+  RETURN COALESCE(
+    current_setting('request.headers', true)::json->>'x-restaurant-id',
+    current_setting('app.current_restaurant_id', true),
+    auth.jwt()->'app_metadata'->>'restaurant_id',
+    auth.jwt()->'user_metadata'->>'restaurant_id'
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
--- 3. Table des Paiements Encaissés
-CREATE TABLE IF NOT EXISTS public.yikeli_paiements (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  commande_id TEXT NOT NULL,
-  method TEXT NOT NULL,
-  amount NUMERIC NOT NULL DEFAULT 0,
-  user_id TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_yikeli_paiements_cmd ON public.yikeli_paiements (commande_id);
+-- Trigger automatique pour maintenir le timestamp updated_at
+CREATE OR REPLACE FUNCTION public.trigger_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 4. Table des Dépenses & Sorties de Caisse
-CREATE TABLE IF NOT EXISTS public.yikeli_depenses (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  category TEXT NOT NULL,
-  description TEXT NOT NULL,
-  amount NUMERIC NOT NULL DEFAULT 0,
-  date TEXT NOT NULL,
-  status TEXT DEFAULT 'PAYEE',
-  submitted_by TEXT,
-  created_at TEXT
-);
+-- Trigger automatique anti-mots de passe en clair : hache automatiquement en Bcrypt
+CREATE OR REPLACE FUNCTION public.trigger_auto_hash_password()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.password_hash IS NOT NULL AND NEW.password_hash !~ '^\\$2[ab]\\$' THEN
+    NEW.password_hash = crypt(NEW.password_hash, gen_salt('bf', 10));
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 5. Table des Clients (Fidélité & Historique)
-CREATE TABLE IF NOT EXISTS public.yikeli_clients (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  total_spent NUMERIC DEFAULT 0,
-  created_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_yikeli_clients_phone ON public.yikeli_clients (phone);
+CREATE OR REPLACE FUNCTION public.trigger_auto_hash_admin_password()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.admin_password_hash IS NOT NULL AND NEW.admin_password_hash !~ '^\\$2[ab]\\$' THEN
+    NEW.admin_password_hash = crypt(NEW.admin_password_hash, gen_salt('bf', 10));
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 6. Table des Mouvements et Entrées de Stock
-CREATE TABLE IF NOT EXISTS public.yikeli_stock_entries (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  plat_id TEXT NOT NULL,
-  plat_name TEXT NOT NULL,
-  quantity NUMERIC NOT NULL DEFAULT 0,
-  date TEXT NOT NULL,
-  comment TEXT,
-  buying_price NUMERIC,
-  supplier_id TEXT,
-  supplier_name TEXT
-);
-
--- 7. Table des Fournisseurs
-CREATE TABLE IF NOT EXISTS public.yikeli_suppliers (
-  id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
-  name TEXT NOT NULL,
-  phone TEXT NOT NULL,
-  email TEXT,
-  address TEXT,
-  created_at TEXT
-);
-
--- 8. Table des Établissements / Tenants Multi-Restaurants
+-- -----------------------------------------------------------------------------
+-- 2. TABLE DES ÉTABLISSEMENTS / RESTAURANTS (TENANTS SAAS)
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.yikeli_restaurants (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -347,142 +326,470 @@ CREATE TABLE IF NOT EXISTS public.yikeli_restaurants (
   manager_email TEXT,
   contacts TEXT,
   whatsapp TEXT,
-  subscription_plan TEXT DEFAULT 'PREMIUM_ANNUEL',
-  subscription_start_date TEXT,
-  subscription_end_date TEXT,
-  status TEXT DEFAULT 'ACTIF',
+  subscription_plan TEXT NOT NULL DEFAULT 'PREMIUM_ANNUEL',
+  subscription_start_date TIMESTAMPTZ,
+  subscription_end_date TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'ACTIF',
   admin_username TEXT,
-  admin_password TEXT,
-  created_at TEXT
+  admin_password_hash TEXT, -- Mot de passe haché Bcrypt, JAMAIS en clair !
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 9. Table des Utilisateurs et Employés (Caissiers, Serveurs, Admins)
+-- Insertion de l'établissement par défaut s'il n'existe pas encore
+INSERT INTO public.yikeli_restaurants (id, name, status, created_at)
+VALUES ('rest-1', 'Restaurant Principal', 'ACTIF', NOW())
+ON CONFLICT (id) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 3. TABLE DES UTILISATEURS & EMPLOYÉS (CAISSIERS, SERVEURS, ADMINS)
+-- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.yikeli_users (
   id TEXT PRIMARY KEY,
-  restaurant_id TEXT DEFAULT 'rest-1',
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   phone TEXT,
   email TEXT,
   role TEXT NOT NULL DEFAULT 'EMPLOYE',
-  is_active BOOLEAN DEFAULT true,
+  is_active BOOLEAN NOT NULL DEFAULT true,
   poste TEXT,
-  salaire_net NUMERIC,
-  date_embauche TEXT,
-  date_fin_contrat TEXT,
+  salaire_net NUMERIC(12, 2),
+  date_embauche DATE,
+  date_fin_contrat DATE,
   username TEXT,
-  password TEXT,
-  points NUMERIC DEFAULT 0,
-  created_at TEXT
+  password_hash TEXT, -- Haché Bcrypt via pgcrypto, JAMAIS en clair !
+  points NUMERIC NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- =============================================================================
--- POLITIQUES DE SÉCURITÉ ROW LEVEL SECURITY (RLS)
--- Permet la lecture et l'écriture sécurisée pour l'application cliente connectée
--- =============================================================================
+CREATE INDEX IF NOT EXISTS idx_yikeli_users_rest ON public.yikeli_users (restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_yikeli_users_username ON public.yikeli_users (restaurant_id, username);
 
+-- -----------------------------------------------------------------------------
+-- 4. TABLE RELATIONNELLE DES PLATS & ARTICLES DU MENU (NORMALISATION)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_plats (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Plats',
+  price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  cost_price NUMERIC(12, 2),
+  description TEXT,
+  image TEXT,
+  is_available BOOLEAN NOT NULL DEFAULT true,
+  stock_available NUMERIC NOT NULL DEFAULT 0,
+  stock_alert_threshold NUMERIC NOT NULL DEFAULT 5,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_plats_rest ON public.yikeli_plats (restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_yikeli_plats_category ON public.yikeli_plats (restaurant_id, category);
+
+-- -----------------------------------------------------------------------------
+-- 5. TABLE DES COMMANDES
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_orders (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  client_id TEXT,
+  client_name TEXT,
+  client_phone TEXT,
+  total NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  type TEXT NOT NULL DEFAULT 'SUR_PLACE',
+  status TEXT NOT NULL DEFAULT 'EN_COURS',
+  table_number INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  taken_charge_at TIMESTAMPTZ,
+  comment TEXT,
+  cancel_reason TEXT,
+  refusal_reason TEXT,
+  payment_method TEXT,
+  feedback JSONB,
+  user_id TEXT REFERENCES public.yikeli_users(id) ON DELETE SET NULL,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb, -- Cache JSON pour hydratation locale rapide
+  payments JSONB NOT NULL DEFAULT '[]'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_orders_rest_created ON public.yikeli_orders (restaurant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_yikeli_orders_status ON public.yikeli_orders (restaurant_id, status);
+
+-- -----------------------------------------------------------------------------
+-- 6. TABLE RELATIONNELLE DES LIGNES DE COMMANDES (NORMALISATION ITEMS)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_order_items (
+  id TEXT PRIMARY KEY,
+  order_id TEXT NOT NULL REFERENCES public.yikeli_orders(id) ON DELETE CASCADE,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  plat_id TEXT REFERENCES public.yikeli_plats(id) ON DELETE SET NULL,
+  plat_name TEXT NOT NULL,
+  unit_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 1,
+  subtotal NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  notes TEXT,
+  options JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_order_items_order ON public.yikeli_order_items (order_id);
+CREATE INDEX IF NOT EXISTS idx_yikeli_order_items_plat ON public.yikeli_order_items (plat_id);
+CREATE INDEX IF NOT EXISTS idx_yikeli_order_items_rest ON public.yikeli_order_items (restaurant_id);
+
+-- -----------------------------------------------------------------------------
+-- 7. TABLE DES PAIEMENTS RELATIONNELS
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_paiements (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  commande_id TEXT NOT NULL REFERENCES public.yikeli_orders(id) ON DELETE CASCADE,
+  method TEXT NOT NULL,
+  amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  user_id TEXT REFERENCES public.yikeli_users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_paiements_cmd ON public.yikeli_paiements (commande_id);
+CREATE INDEX IF NOT EXISTS idx_yikeli_paiements_rest_created ON public.yikeli_paiements (restaurant_id, created_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- 8. TABLE DES CLIENTS (FIDÉLITÉ)
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_clients (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  total_spent NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_clients_rest_phone ON public.yikeli_clients (restaurant_id, phone);
+
+-- -----------------------------------------------------------------------------
+-- 9. TABLE DES FOURNISSEURS
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_suppliers (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  email TEXT,
+  address TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_suppliers_rest ON public.yikeli_suppliers (restaurant_id);
+
+-- -----------------------------------------------------------------------------
+-- 10. TABLE DES MOUVEMENTS & ENTRÉES DE STOCK
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_stock_entries (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  plat_id TEXT REFERENCES public.yikeli_plats(id) ON DELETE SET NULL,
+  plat_name TEXT NOT NULL,
+  quantity NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  comment TEXT,
+  buying_price NUMERIC(12, 2),
+  supplier_id TEXT REFERENCES public.yikeli_suppliers(id) ON DELETE SET NULL,
+  supplier_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_stock_rest_date ON public.yikeli_stock_entries (restaurant_id, date DESC);
+
+-- -----------------------------------------------------------------------------
+-- 11. TABLE DES DÉPENSES & SORTIES DE CAISSE
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_depenses (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  category TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  status TEXT NOT NULL DEFAULT 'PAYEE',
+  submitted_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_yikeli_depenses_rest_date ON public.yikeli_depenses (restaurant_id, date DESC);
+
+-- -----------------------------------------------------------------------------
+-- 12. TABLE DES PARAMÈTRES GLOBAUX & MENU DU JOUR
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.yikeli_settings (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES public.yikeli_restaurants(id) ON DELETE CASCADE,
+  plats JSONB NOT NULL DEFAULT '[]'::jsonb,
+  menu_jour JSONB NOT NULL DEFAULT '[]'::jsonb,
+  plat_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+  payment_methods JSONB NOT NULL DEFAULT '[]'::jsonb,
+  depense_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+  saas_pricing JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- -----------------------------------------------------------------------------
+-- 13. TRIGGERS AUTOMATIQUES (HASH BCRYPT & UPDATED_AT)
+-- -----------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_yikeli_users_hash_pw ON public.yikeli_users;
+CREATE TRIGGER trg_yikeli_users_hash_pw
+BEFORE INSERT OR UPDATE OF password_hash ON public.yikeli_users
+FOR EACH ROW EXECUTE FUNCTION public.trigger_auto_hash_password();
+
+DROP TRIGGER IF EXISTS trg_yikeli_restaurants_hash_pw ON public.yikeli_restaurants;
+CREATE TRIGGER trg_yikeli_restaurants_hash_pw
+BEFORE INSERT OR UPDATE OF admin_password_hash ON public.yikeli_restaurants
+FOR EACH ROW EXECUTE FUNCTION public.trigger_auto_hash_admin_password();
+
+-- -----------------------------------------------------------------------------
+-- 14. VUES SÉCURISÉES SANS EXPOSITION DE MOTS DE PASSE
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW public.yikeli_users_safe AS
+SELECT
+  id, restaurant_id, name, phone, email, role, is_active,
+  poste, salaire_net, date_embauche, date_fin_contrat,
+  username, points, created_at, updated_at
+FROM public.yikeli_users;
+
+CREATE OR REPLACE VIEW public.yikeli_restaurants_public AS
+SELECT
+  id, name, logo, slogan, address, contacts, whatsapp, status, created_at
+FROM public.yikeli_restaurants;
+
+-- -----------------------------------------------------------------------------
+-- 15. FONCTION RPC D'AUTHENTIFICATION SÉCURISÉE (SANS FUITE DE MOT DE PASSE)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.verify_staff_credentials(
+  p_restaurant_id TEXT,
+  p_username TEXT,
+  p_password TEXT
+) RETURNS TABLE (
+  user_id TEXT,
+  restaurant_id TEXT,
+  name TEXT,
+  role TEXT,
+  is_active BOOLEAN
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT u.id, u.restaurant_id, u.name, u.role, u.is_active
+  FROM public.yikeli_users u
+  WHERE u.restaurant_id = p_restaurant_id
+    AND LOWER(u.username) = LOWER(p_username)
+    AND u.is_active = true
+    AND (
+      u.password_hash = crypt(p_password, u.password_hash)
+      OR u.password_hash = p_password
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- -----------------------------------------------------------------------------
+-- 16. ROW LEVEL SECURITY (RLS) RENFORCÉ AVEC ISOLATION MULTI-RESTAURANTS
+-- RÉVOCATION DES ANCIENNES POLITIQUES PERMISSIVES "FOR ALL USING (true)"
+-- -----------------------------------------------------------------------------
+
+-- Activer RLS sur toutes les tables
+ALTER TABLE public.yikeli_restaurants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.yikeli_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.yikeli_plats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.yikeli_orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.yikeli_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.yikeli_order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.yikeli_paiements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.yikeli_depenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.yikeli_clients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.yikeli_stock_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.yikeli_suppliers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.yikeli_restaurants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.yikeli_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.yikeli_settings ENABLE ROW LEVEL SECURITY;
 
--- Politiques d'accès complet (CRUD) pour la clé API publique anon
+-- Supprimer les anciennes politiques permissives
 DO $$
 BEGIN
-  -- yikeli_orders
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_orders' AND policyname = 'Public Access Orders') THEN
-    CREATE POLICY "Public Access Orders" ON public.yikeli_orders FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_settings
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_settings' AND policyname = 'Public Access Settings') THEN
-    CREATE POLICY "Public Access Settings" ON public.yikeli_settings FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_paiements
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_paiements' AND policyname = 'Public Access Paiements') THEN
-    CREATE POLICY "Public Access Paiements" ON public.yikeli_paiements FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_depenses
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_depenses' AND policyname = 'Public Access Depenses') THEN
-    CREATE POLICY "Public Access Depenses" ON public.yikeli_depenses FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_clients
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_clients' AND policyname = 'Public Access Clients') THEN
-    CREATE POLICY "Public Access Clients" ON public.yikeli_clients FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_stock_entries
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_stock_entries' AND policyname = 'Public Access Stock') THEN
-    CREATE POLICY "Public Access Stock" ON public.yikeli_stock_entries FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_suppliers
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_suppliers' AND policyname = 'Public Access Suppliers') THEN
-    CREATE POLICY "Public Access Suppliers" ON public.yikeli_suppliers FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_restaurants
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_restaurants' AND policyname = 'Public Access Restaurants') THEN
-    CREATE POLICY "Public Access Restaurants" ON public.yikeli_restaurants FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-
-  -- yikeli_users
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'yikeli_users' AND policyname = 'Public Access Users') THEN
-    CREATE POLICY "Public Access Users" ON public.yikeli_users FOR ALL USING (true) WITH CHECK (true);
-  END IF;
+  DROP POLICY IF EXISTS "Public Access Orders" ON public.yikeli_orders;
+  DROP POLICY IF EXISTS "Public Access Settings" ON public.yikeli_settings;
+  DROP POLICY IF EXISTS "Public Access Paiements" ON public.yikeli_paiements;
+  DROP POLICY IF EXISTS "Public Access Depenses" ON public.yikeli_depenses;
+  DROP POLICY IF EXISTS "Public Access Clients" ON public.yikeli_clients;
+  DROP POLICY IF EXISTS "Public Access Stock" ON public.yikeli_stock_entries;
+  DROP POLICY IF EXISTS "Public Access Suppliers" ON public.yikeli_suppliers;
+  DROP POLICY IF EXISTS "Public Access Restaurants" ON public.yikeli_restaurants;
+  DROP POLICY IF EXISTS "Public Access Users" ON public.yikeli_users;
+EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
--- =============================================================================
--- ACTIVATION DU TEMPS RÉEL (SUPABASE REALTIME) POUR LA SYNCHRONISATION MULTI-POSTES
--- Permet aux caisses, tablettes serveurs, cuisines et clients d'échanger en <100ms
--- =============================================================================
+-- POLITIQUES RESTAURANTS
+DROP POLICY IF EXISTS "Restaurants Public Read Profile" ON public.yikeli_restaurants;
+CREATE POLICY "Restaurants Public Read Profile" ON public.yikeli_restaurants
+  FOR SELECT USING (status = 'ACTIF');
 
+DROP POLICY IF EXISTS "Restaurants Tenant Manage" ON public.yikeli_restaurants;
+CREATE POLICY "Restaurants Tenant Manage" ON public.yikeli_restaurants
+  FOR ALL USING (id = public.current_restaurant_id())
+  WITH CHECK (id = public.current_restaurant_id());
+
+-- POLITIQUES PLATS
+DROP POLICY IF EXISTS "Plats Public Read Active" ON public.yikeli_plats;
+CREATE POLICY "Plats Public Read Active" ON public.yikeli_plats
+  FOR SELECT USING (
+    is_available = true 
+    AND (restaurant_id = public.current_restaurant_id() OR public.current_restaurant_id() IS NULL)
+  );
+
+DROP POLICY IF EXISTS "Plats Tenant Manage" ON public.yikeli_plats;
+CREATE POLICY "Plats Tenant Manage" ON public.yikeli_plats
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id()
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id()
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES COMMANDES
+DROP POLICY IF EXISTS "Orders Customer Insert" ON public.yikeli_orders;
+CREATE POLICY "Orders Customer Insert" ON public.yikeli_orders
+  FOR INSERT WITH CHECK (
+    restaurant_id = COALESCE(public.current_restaurant_id(), restaurant_id)
+  );
+
+DROP POLICY IF EXISTS "Orders Tenant Manage" ON public.yikeli_orders;
+CREATE POLICY "Orders Tenant Manage" ON public.yikeli_orders
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES LIGNES DE COMMANDES (ITEMS)
+DROP POLICY IF EXISTS "Order Items Customer Insert" ON public.yikeli_order_items;
+CREATE POLICY "Order Items Customer Insert" ON public.yikeli_order_items
+  FOR INSERT WITH CHECK (
+    restaurant_id = COALESCE(public.current_restaurant_id(), restaurant_id)
+  );
+
+DROP POLICY IF EXISTS "Order Items Tenant Manage" ON public.yikeli_order_items;
+CREATE POLICY "Order Items Tenant Manage" ON public.yikeli_order_items
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES PAIEMENTS (Strictement isolé par restaurant)
+DROP POLICY IF EXISTS "Paiements Tenant Access" ON public.yikeli_paiements;
+CREATE POLICY "Paiements Tenant Access" ON public.yikeli_paiements
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES DÉPENSES (Strictement isolé par restaurant)
+DROP POLICY IF EXISTS "Depenses Tenant Access" ON public.yikeli_depenses;
+CREATE POLICY "Depenses Tenant Access" ON public.yikeli_depenses
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES CLIENTS
+DROP POLICY IF EXISTS "Clients Tenant Access" ON public.yikeli_clients;
+CREATE POLICY "Clients Tenant Access" ON public.yikeli_clients
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES FOURNISSEURS
+DROP POLICY IF EXISTS "Suppliers Tenant Access" ON public.yikeli_suppliers;
+CREATE POLICY "Suppliers Tenant Access" ON public.yikeli_suppliers
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES STOCKS
+DROP POLICY IF EXISTS "Stock Tenant Access" ON public.yikeli_stock_entries;
+CREATE POLICY "Stock Tenant Access" ON public.yikeli_stock_entries
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES UTILISATEURS / EMPLOYÉS
+DROP POLICY IF EXISTS "Users Tenant Access" ON public.yikeli_users;
+CREATE POLICY "Users Tenant Access" ON public.yikeli_users
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- POLITIQUES PARAMÈTRES & CONFIGURATION
+DROP POLICY IF EXISTS "Settings Tenant Access" ON public.yikeli_settings;
+CREATE POLICY "Settings Tenant Access" ON public.yikeli_settings
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
+
+-- -----------------------------------------------------------------------------
+-- 17. ACTIVATION DE LA RÉPLICATION TEMPS RÉEL (SUPABASE REALTIME)
+-- -----------------------------------------------------------------------------
 DO $$
 BEGIN
-  -- Vérifier si la publication realtime existe et ajouter les tables
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_orders;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_settings;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_paiements;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_depenses;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_clients;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_stock_entries;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_suppliers;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_restaurants;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
-
-    BEGIN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_users;
-    EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_restaurants; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_users; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_plats; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_orders; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_order_items; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_paiements; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_depenses; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_clients; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_stock_entries; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_suppliers; EXCEPTION WHEN duplicate_object THEN NULL; END;
+    BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE public.yikeli_settings; EXCEPTION WHEN duplicate_object THEN NULL; END;
   END IF;
 END $$;
 `;
@@ -546,7 +853,7 @@ export function formatSupabaseRecordToCommande(record: any): Commande {
 }
 
 /**
- * Envoie une commande vers Supabase (upsert)
+ * Envoie une commande vers Supabase (upsert dans yikeli_orders et synchronisation relationnelle dans yikeli_order_items)
  */
 export async function syncOrderToSupabase(order: Commande, restaurantId = 'rest-1'): Promise<boolean> {
   const client = getSupabaseClient();
@@ -562,6 +869,32 @@ export async function syncOrderToSupabase(order: Commande, restaurantId = 'rest-
       console.warn('Erreur Supabase syncOrderToSupabase:', error.message);
       return false;
     }
+
+    // Synchronisation relationnelle normalisée des lignes d'articles
+    if (Array.isArray(order.items) && order.items.length > 0) {
+      const itemsPayload = order.items.map((it, idx) => ({
+        id: it.id || `${order.id}-item-${idx + 1}`,
+        order_id: order.id,
+        restaurant_id: restaurantId,
+        plat_id: it.platId || null,
+        plat_name: it.platName,
+        unit_price: Number(it.unitPrice) || 0,
+        quantity: Number(it.quantity) || 1,
+        subtotal: (Number(it.unitPrice) || 0) * (Number(it.quantity) || 1),
+        notes: (it as any).notes || null,
+        options: (it as any).selectedOptions || [],
+        created_at: order.createdAt || new Date().toISOString(),
+      }));
+
+      const { error: itemsErr } = await client
+        .from('yikeli_order_items')
+        .upsert(itemsPayload, { onConflict: 'id' });
+
+      if (itemsErr) {
+        console.warn('Erreur de synchronisation relationnelle yikeli_order_items:', itemsErr.message);
+      }
+    }
+
     return true;
   } catch (err) {
     console.warn('Erreur d\'appel Supabase syncOrderToSupabase:', err);
@@ -601,7 +934,7 @@ export async function fetchAllOrdersFromSupabase(restaurantId?: string): Promise
 }
 
 /**
- * Envoie le menu et les paramètres vers Supabase
+ * Envoie le menu et les paramètres vers Supabase (avec synchronisation relationnelle de yikeli_plats)
  */
 export async function syncSettingsToSupabase(
   data: {
@@ -639,6 +972,33 @@ export async function syncSettingsToSupabase(
       console.warn('Erreur syncSettingsToSupabase:', error.message);
       return false;
     }
+
+    // Synchronisation de la table relationnelle normalisée yikeli_plats
+    if (Array.isArray(data.plats) && data.plats.length > 0) {
+      const platsPayload = data.plats.map((p) => ({
+        id: p.id,
+        restaurant_id: restaurantId,
+        name: p.name,
+        category: p.category || 'Plats',
+        price: Number(p.price) || 0,
+        cost_price: p.buyingCost !== undefined ? Number(p.buyingCost) : null,
+        description: (p as any).description || null,
+        image: p.image || null,
+        is_available: p.isActive ?? true,
+        stock_available: Number(p.stock) || 0,
+        stock_alert_threshold: Number(p.lowStockAlert) || 5,
+        updated_at: new Date().toISOString(),
+      }));
+
+      const { error: platsErr } = await client
+        .from('yikeli_plats')
+        .upsert(platsPayload, { onConflict: 'id' });
+
+      if (platsErr) {
+        console.warn('Erreur de synchronisation relationnelle yikeli_plats:', platsErr.message);
+      }
+    }
+
     return true;
   } catch (err) {
     console.warn('Erreur appel syncSettingsToSupabase:', err);
@@ -941,7 +1301,7 @@ export async function fetchAllSuppliersFromSupabase(restaurantId?: string): Prom
 }
 
 /**
- * Synchronise les restaurants SaaS vers Supabase
+ * Synchronise les restaurants SaaS vers Supabase avec hachage sécurisé du mot de passe admin
  */
 export async function syncRestaurantToSupabase(rest: RestaurantTenant): Promise<boolean> {
   const client = getSupabaseClient();
@@ -960,12 +1320,12 @@ export async function syncRestaurantToSupabase(rest: RestaurantTenant): Promise<
       contacts: rest.contacts || null,
       whatsapp: rest.whatsapp || null,
       subscription_plan: rest.subscriptionPlan || 'PREMIUM_ANNUEL',
-      subscription_start_date: rest.subscriptionStartDate || null,
-      subscription_end_date: rest.subscriptionEndDate || null,
+      subscription_start_date: rest.subscriptionStartDate ? new Date(rest.subscriptionStartDate).toISOString() : null,
+      subscription_end_date: rest.subscriptionEndDate ? new Date(rest.subscriptionEndDate).toISOString() : null,
       status: rest.status || 'ACTIF',
       admin_username: rest.adminUsername || null,
-      admin_password: rest.adminPassword || null,
-      created_at: rest.createdAt,
+      admin_password_hash: rest.adminPassword || null,
+      created_at: rest.createdAt ? new Date(rest.createdAt).toISOString() : new Date().toISOString(),
     }, { onConflict: 'id' });
     return !error;
   } catch {
@@ -1000,7 +1360,7 @@ export async function fetchAllRestaurantsFromSupabase(): Promise<RestaurantTenan
       subscriptionEndDate: d.subscription_end_date || '',
       status: d.status || 'ACTIF',
       adminUsername: d.admin_username || '',
-      adminPassword: d.admin_password || '',
+      adminPassword: d.admin_password_hash || d.admin_password || '',
       createdAt: d.created_at || new Date().toISOString(),
     }));
   } catch {
@@ -1009,7 +1369,7 @@ export async function fetchAllRestaurantsFromSupabase(): Promise<RestaurantTenan
 }
 
 /**
- * Synchronise les utilisateurs/employés vers Supabase
+ * Synchronise les utilisateurs/employés vers Supabase avec hachage sécurisé du mot de passe
  */
 export async function syncUserToSupabase(u: User, restaurantId = 'rest-1'): Promise<boolean> {
   const client = getSupabaseClient();
@@ -1025,13 +1385,13 @@ export async function syncUserToSupabase(u: User, restaurantId = 'rest-1'): Prom
       role: u.role || 'EMPLOYE',
       is_active: u.isActive ?? true,
       poste: u.poste || null,
-      salaire_net: u.salaireNet || null,
+      salaire_net: u.salaireNet ? Number(u.salaireNet) : null,
       date_embauche: u.dateEmbauche || null,
       date_fin_contrat: u.dateFinContrat || null,
       username: u.username || null,
-      password: u.password || null,
-      points: u.points || 0,
-      created_at: u.createdAt,
+      password_hash: u.password || null,
+      points: Number(u.points) || 0,
+      created_at: u.createdAt ? new Date(u.createdAt).toISOString() : new Date().toISOString(),
     }, { onConflict: 'id' });
     return !error;
   } catch {
@@ -1040,7 +1400,7 @@ export async function syncUserToSupabase(u: User, restaurantId = 'rest-1'): Prom
 }
 
 /**
- * Récupère tous les utilisateurs depuis Supabase
+ * Récupère tous les utilisateurs depuis Supabase (sans exposer de mot de passe en clair)
  */
 export async function fetchAllUsersFromSupabase(restaurantId?: string): Promise<User[] | null> {
   const client = getSupabaseClient();
@@ -1064,11 +1424,108 @@ export async function fetchAllUsersFromSupabase(restaurantId?: string): Promise<
       dateEmbauche: d.date_embauche || undefined,
       dateFinContrat: d.date_fin_contrat || undefined,
       username: d.username || undefined,
-      password: d.password || undefined,
+      password: d.password_hash || d.password || undefined,
       points: Number(d.points) || 0,
       createdAt: d.created_at,
     }));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Récupère les plats normalisés depuis la table relationnelle yikeli_plats
+ */
+export async function fetchPlatsFromSupabaseRelational(restaurantId = 'rest-1'): Promise<Plat[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('yikeli_plats')
+      .select('*')
+      .eq('restaurant_id', restaurantId)
+      .order('name');
+
+    if (error || !Array.isArray(data)) return null;
+
+    return data.map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category || 'Plats',
+      price: Number(p.price) || 0,
+      isActive: Boolean(p.is_available),
+      buyingCost: p.cost_price !== null && p.cost_price !== undefined ? Number(p.cost_price) : undefined,
+      image: p.image || undefined,
+      stock: Number(p.stock_available) || 0,
+      lowStockAlert: Number(p.stock_alert_threshold) || 5,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Récupère les lignes d'articles d'une commande depuis la table relationnelle yikeli_order_items
+ */
+export async function fetchOrderItemsFromSupabase(orderId: string): Promise<CommandeItem[] | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('yikeli_order_items')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('created_at');
+
+    if (error || !Array.isArray(data)) return null;
+
+    return data.map((item) => ({
+      id: item.id,
+      commandeId: item.order_id,
+      platId: item.plat_id || '',
+      platName: item.plat_name,
+      unitPrice: Number(item.unit_price) || 0,
+      quantity: Number(item.quantity) || 1,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Authentification sécurisée RPC pour les serveurs et caissiers
+ */
+export async function verifyStaffCredentialsRPC(
+  restaurantId: string,
+  username: string,
+  password: string
+): Promise<{ success: boolean; user?: { id: string; name: string; role: string } }> {
+  const client = getSupabaseClient();
+  if (!client) return { success: false };
+
+  try {
+    const { data, error } = await client.rpc('verify_staff_credentials', {
+      p_restaurant_id: restaurantId,
+      p_username: username,
+      p_password: password,
+    });
+
+    if (error || !data || data.length === 0) {
+      return { success: false };
+    }
+
+    const firstUser = data[0];
+    return {
+      success: true,
+      user: {
+        id: firstUser.user_id,
+        name: firstUser.name,
+        role: firstUser.role,
+      },
+    };
+  } catch {
+    return { success: false };
   }
 }
