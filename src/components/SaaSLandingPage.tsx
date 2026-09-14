@@ -889,6 +889,7 @@ export default function SaaSLandingPage({
             whatsapp: '+2250700000000',
             adminUsername: 'admin',
             adminPassword: 'password',
+            accessCode: 'DEMO-2026',
             createdAt: '2026-01-01'
           }}
           saasPricing={saasPricing}

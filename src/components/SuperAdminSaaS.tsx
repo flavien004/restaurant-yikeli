@@ -28,7 +28,9 @@ import {
   TrendingUp,
   X,
   Lock,
-  UserCheck
+  UserCheck,
+  KeyRound,
+  Copy,
 } from 'lucide-react';
 
 interface SuperAdminSaaSProps {
@@ -103,6 +105,7 @@ export default function SuperAdminSaaS({
     subscriptionEndDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
     adminUsername: '',
     adminPassword: '',
+    accessCode: '',
   });
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -201,6 +204,7 @@ export default function SuperAdminSaaS({
       subscriptionEndDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
       adminUsername: '',
       adminPassword: '',
+      accessCode: `RESTO-${Math.floor(1000 + Math.random() * 9000)}`,
     });
     setFormErrors({});
     setEditingRestaurant(null);
@@ -224,6 +228,7 @@ export default function SuperAdminSaaS({
       subscriptionEndDate: r.subscriptionEndDate,
       adminUsername: r.adminUsername,
       adminPassword: r.adminPassword,
+      accessCode: r.accessCode || '',
     });
     setFormErrors({});
     setIsCreateModalOpen(true);
@@ -266,6 +271,7 @@ export default function SuperAdminSaaS({
           subscriptionEndDate: validated.subscriptionEndDate,
           adminUsername: validated.adminUsername,
           adminPassword: validated.adminPassword,
+          accessCode: validated.accessCode || editingRestaurant.accessCode,
           status: getDaysRemaining(validated.subscriptionEndDate) < 0 ? 'EXPIRE' : editingRestaurant.status,
         });
       } else {
@@ -284,6 +290,7 @@ export default function SuperAdminSaaS({
           subscriptionEndDate: validated.subscriptionEndDate,
           adminUsername: validated.adminUsername,
           adminPassword: validated.adminPassword,
+          accessCode: validated.accessCode || undefined,
           status: 'ACTIF',
         });
       }
@@ -703,6 +710,31 @@ export default function SuperAdminSaaS({
                       </div>
                     </div>
 
+                    {/* Code Confidentiel d'Accès Équipe */}
+                    <div className="sm:col-span-2 lg:col-span-3 bg-orange-50/80 border border-orange-200/80 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <KeyRound className="w-4 h-4 text-orange-600 shrink-0" />
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-orange-800 tracking-wider block">Code confidentiel d'accès équipe :</span>
+                          <span className="font-mono font-black text-sm text-slate-900 tracking-widest">{r.accessCode || 'NON DÉFINI'}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (r.accessCode) {
+                            navigator.clipboard.writeText(r.accessCode);
+                            alert(`Code d'accès pour "${r.name}" copié : ${r.accessCode}`);
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-white hover:bg-orange-100 text-orange-700 text-xs font-bold rounded-lg border border-orange-200 transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                        title="Copier le code confidentiel"
+                      >
+                        <Copy className="w-3 h-3 text-orange-600" />
+                        Copier le code
+                      </button>
+                    </div>
+
                   </div>
 
                   {/* Actions Toolbar */}
@@ -977,6 +1009,38 @@ export default function SuperAdminSaaS({
                       className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />
                     {formErrors.adminPassword && <p className="text-[10px] text-rose-500 font-bold mt-1">{formErrors.adminPassword}</p>}
+                  </div>
+
+                  <div className="sm:col-span-2 bg-amber-50 p-3.5 rounded-xl border border-amber-200">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-black text-amber-950 flex items-center gap-1.5">
+                        <KeyRound className="w-4 h-4 text-amber-600" />
+                        Code Unique &amp; Confidentiel d'Accès Équipe <span className="text-rose-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefix = (formData.name.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'RES').toUpperCase();
+                          const code = `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+                          setFormData((prev) => ({ ...prev, accessCode: code }));
+                        }}
+                        className="text-[10px] font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+                      >
+                        Générer un code
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="ex: YIK-7749"
+                      value={formData.accessCode}
+                      onChange={(e) => setFormData({ ...formData, accessCode: e.target.value.toUpperCase() })}
+                      className="w-full px-3 py-2 bg-white border border-amber-300 rounded-xl text-xs font-black font-mono tracking-widest text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 uppercase"
+                    />
+                    <p className="text-[10px] text-amber-900/80 mt-1">
+                      Ce code confidentiel est requis pour que le personnel de l'établissement puisse déverrouiller son portail et ses espaces de travail depuis le menu public.
+                    </p>
+                    {formErrors.accessCode && <p className="text-[10px] text-rose-500 font-bold mt-1">{formErrors.accessCode}</p>}
                   </div>
                 </div>
               </div>

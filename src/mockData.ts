@@ -25,6 +25,7 @@ export const INITIAL_RESTAURANTS: RestaurantTenant[] = [
     status: 'ACTIF',
     adminUsername: 'admin',
     adminPassword: 'admin',
+    accessCode: 'YIK-7749',
     createdAt: '2026-01-01T08:00:00Z',
   },
   {
@@ -44,6 +45,7 @@ export const INITIAL_RESTAURANTS: RestaurantTenant[] = [
     status: 'ACTIF',
     adminUsername: 'gerant_jardin',
     adminPassword: 'password123',
+    accessCode: 'JAR-8821',
     createdAt: '2026-02-15T10:00:00Z',
   },
   {
@@ -63,6 +65,7 @@ export const INITIAL_RESTAURANTS: RestaurantTenant[] = [
     status: 'EXPIRE',
     adminUsername: 'gerant_marcory',
     adminPassword: 'password123',
+    accessCode: 'MAR-5510',
     createdAt: '2025-11-10T14:00:00Z',
   }
 ];

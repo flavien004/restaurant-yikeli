@@ -28,6 +28,7 @@ export interface RestaurantTenant {
   status: 'ACTIF' | 'EXPIRE' | 'SUSPENDU';
   adminUsername: string;         // Identifiant d'accès du gérant
   adminPassword: string;         // Mot de passe du gérant
+  accessCode: string;            // Code unique et confidentiel d'accès équipe du restaurant
   createdAt: string;
 }
 

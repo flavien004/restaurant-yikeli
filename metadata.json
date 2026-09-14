@@ -1,6 +1,6 @@
 {
   "name": "RestoChain",
-  "description": "Plateforme SaaS Multi-Restaurants RestoChain : commandes client en ligne, POS tactile, suivi de trésorerie, caisse et gestion multi-établissements.",
+  "description": "Menu digital et prise de commande en ligne pour restaurants, caisse tactile POS, gestion de salle et suivi en temps réel.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

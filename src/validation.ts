@@ -174,6 +174,7 @@ export const RestaurantTenantValidationSchema = z.object({
   subscriptionEndDate: z.string().transform(sanitizeString),
   adminUsername: safeString(3, 40),
   adminPassword: safeString(4, 40),
+  accessCode: z.string().transform(sanitizeString).optional().nullable(),
 });
 
 // ----------------------------------------------------

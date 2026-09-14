@@ -389,6 +389,7 @@ CREATE TABLE IF NOT EXISTS public.yikeli_restaurants (
   status TEXT NOT NULL DEFAULT 'ACTIF',
   admin_username TEXT,
   admin_password_hash TEXT, -- Mot de passe haché Bcrypt, JAMAIS en clair !
+  access_code TEXT, -- Code confidentiel d'accès équipe au portail du restaurant
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1382,6 +1383,7 @@ export async function syncRestaurantToSupabase(rest: RestaurantTenant): Promise<
       status: rest.status || 'ACTIF',
       admin_username: rest.adminUsername || null,
       admin_password_hash: rest.adminPassword || null,
+      access_code: rest.accessCode || null,
       created_at: rest.createdAt ? new Date(rest.createdAt).toISOString() : new Date().toISOString(),
     }, { onConflict: 'id' });
     return !error;
@@ -1418,6 +1420,7 @@ export async function fetchAllRestaurantsFromSupabase(): Promise<RestaurantTenan
       status: d.status || 'ACTIF',
       adminUsername: d.admin_username || '',
       adminPassword: d.admin_password_hash || d.admin_password || '',
+      accessCode: d.access_code || d.accessCode || `${(d.name || 'RES').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase()}-${(d.id || '1000').slice(-4)}`,
       createdAt: d.created_at || new Date().toISOString(),
     }));
   } catch {

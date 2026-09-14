@@ -355,7 +355,21 @@ export function useYikeliDb() {
     const storedRestaurants = localStorage.getItem('yikeli_restaurants');
     if (storedRestaurants) {
       try {
-        setRestaurants(JSON.parse(storedRestaurants));
+        const parsedRests: RestaurantTenant[] = JSON.parse(storedRestaurants);
+        let hasChanges = false;
+        const normalizedRests = parsedRests.map((r, idx) => {
+          if (!r.accessCode || r.accessCode.trim() === '') {
+            hasChanges = true;
+            const prefix = (r.name.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'RES').toUpperCase();
+            const code = idx === 0 ? 'YIK-7749' : `${prefix}-${1000 + ((idx + 1) * 739) % 9000}`;
+            return { ...r, accessCode: code };
+          }
+          return r;
+        });
+        if (hasChanges) {
+          localStorage.setItem('yikeli_restaurants', JSON.stringify(normalizedRests));
+        }
+        setRestaurants(normalizedRests);
       } catch (e) {
         setRestaurants(INITIAL_RESTAURANTS);
       }
@@ -387,7 +401,15 @@ export function useYikeliDb() {
   // Dynamic cross-tab state synchronization
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      if (!e.newValue) return;
+      if (!e.newValue || !e.key) return;
+      // Only process keys belonging to this application
+      if (!e.key.startsWith('yikeli_')) return;
+
+      if (e.key === 'yikeli_active_restaurant_id') {
+        setActiveRestaurantIdState(e.newValue);
+        return;
+      }
+
       try {
         const parsed = JSON.parse(e.newValue);
         if (e.key === 'yikeli_plats') {
@@ -418,11 +440,10 @@ export function useYikeliDb() {
           setRestaurants(parsed);
         } else if (e.key === 'yikeli_saas_pricing') {
           setSaasPricing(parsed);
-        } else if (e.key === 'yikeli_active_restaurant_id') {
-          setActiveRestaurantIdState(e.newValue);
         }
       } catch (err) {
-        console.error('Error synchronizing cross-tab data:', err);
+        // Silently catch and ignore invalid or corrupt storage values
+        console.warn('Ignored invalid storage event for key:', e.key);
       }
     };
 
@@ -2419,8 +2440,14 @@ export function useYikeliDb() {
   };
 
   const createRestaurant = (data: Omit<RestaurantTenant, 'id' | 'createdAt'>) => {
+    const prefix = (data.name.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'RES').toUpperCase();
+    const generatedAccessCode = data.accessCode && data.accessCode.trim() !== ''
+      ? data.accessCode.trim().toUpperCase()
+      : `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newRest: RestaurantTenant = {
       ...data,
+      accessCode: generatedAccessCode,
       id: 'rest-' + generateUUID(),
       createdAt: new Date().toISOString(),
     };
@@ -2448,6 +2475,18 @@ export function useYikeliDb() {
     }
 
     return newRest;
+  };
+
+  const verifyRestaurantAccessCode = (code: string): RestaurantTenant | null => {
+    if (!code || code.trim() === '') return null;
+    const cleanCode = code.trim().toUpperCase();
+    const found = restaurants.find(
+      (r) =>
+        (r.accessCode && r.accessCode.trim().toUpperCase() === cleanCode) ||
+        r.id.toUpperCase() === cleanCode ||
+        (r.adminPassword && r.adminPassword === code.trim())
+    );
+    return found || null;
   };
 
   const updateRestaurant = (id: string, data: Partial<RestaurantTenant>) => {
@@ -2579,6 +2618,7 @@ export function useYikeliDb() {
     renewSubscription,
     updateSaaSPricing,
     setActiveRestaurantId,
+    verifyRestaurantAccessCode,
     resetDatabaseToDefault,
     lastBackupTime,
     isBackupSuccess,
