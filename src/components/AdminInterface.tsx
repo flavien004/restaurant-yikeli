@@ -1691,7 +1691,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                   Copier l'adresse Client
                 </button>
                 <a
-                  href={`${window.location.origin}${window.location.pathname}?view=client`}
+                  href={typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?view=client` : '?view=client'}
                   target="_blank"
                   rel="noreferrer"
                   className="bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-[10px] py-2 px-3.5 rounded-xl border border-gray-200 shadow-sm transition flex items-center gap-1.5 uppercase tracking-wide text-center"
@@ -1703,7 +1703,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
             </div>
 
             <div className="bg-slate-50 p-2.5 rounded-xl border border-gray-200 text-[10px] text-slate-600 font-mono select-all truncate break-all">
-              {window.location.origin}{window.location.pathname}?view=client
+              {typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}?view=client` : '/?view=client'}
             </div>
           </div>
 

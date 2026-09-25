@@ -252,7 +252,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             }`}
           >
             <RefreshCw className="w-3.5 h-3.5 inline mr-1.5" />
-            Synchronisation & Migration ({localStats.commandesCount} cmds)
+            Synchronisation & Migration ({localStats?.commandesCount ?? 0} cmds)
           </button>
           <button
             onClick={() => setActiveTab('sql')}

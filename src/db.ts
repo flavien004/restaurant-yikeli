@@ -111,6 +111,8 @@ export function useYikeliDb() {
   const [supabaseRealtimeActive, setSupabaseRealtimeActive] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [configVersion, setConfigVersion] = useState(0);
+  const [lastBackupTime, setLastBackupTime] = useState<string>('');
+  const [isBackupSuccess, setIsBackupSuccess] = useState<boolean>(false);
 
   const broadcastSync = () => {
     try {
@@ -1817,8 +1819,7 @@ export function useYikeliDb() {
     localStorage.setItem('yikeli_suppliers', JSON.stringify(initialSuppliers));
   };
 
-  const [lastBackupTime, setLastBackupTime] = useState<string>('');
-  const [isBackupSuccess, setIsBackupSuccess] = useState<boolean>(false);
+
 
   // Sauvegarde automatique périodique réservée aux terminaux de gestion (jamais sur l'appareil client du menu QR)
   useEffect(() => {

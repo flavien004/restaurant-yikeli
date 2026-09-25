@@ -112,6 +112,10 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
   const [passwordChangeError, setPasswordChangeError] = useState('');
   const [passwordChangeSuccess, setPasswordChangeSuccess] = useState(false);
 
+  // Real-time sound notification tracking states
+  const [notification, setNotification] = useState<{ id: string; message: string; orderId: string; type: 'new' | 'ready' } | null>(null);
+  const [knownOrderStates, setKnownOrderStates] = useState<{ [id: string]: string }>({});
+
   // Auto-fill client phone when thermal receipt opens
   React.useEffect(() => {
     if (selectedOrderForReceipt) {
@@ -410,9 +414,6 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
   const pendingOnlineOrders = useMemo(() => {
     return db.commandes.filter((c) => c.type === 'EN_LIGNE' && c.status === 'EN_COUR' || (c.type === 'EN_LIGNE' && c.status === 'EN_COURS'));
   }, [db.commandes]);
-
-  const [notification, setNotification] = useState<{ id: string; message: string; orderId: string; type: 'new' | 'ready' } | null>(null);
-  const [knownOrderStates, setKnownOrderStates] = useState<{ [id: string]: string }>({});
 
   React.useEffect(() => {
     // Diff-tracker for real-time order states

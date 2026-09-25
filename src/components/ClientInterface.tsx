@@ -58,6 +58,62 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
   const [showScanner, setShowScanner] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
+  const [clientName, setClientName] = useState(() => {
+    try {
+      return localStorage.getItem('yikeli_client_name') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [clientPhone, setClientPhone] = useState(() => {
+    try {
+      return localStorage.getItem('yikeli_client_phone') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [saveDetails, setSaveDetails] = useState(() => {
+    try {
+      const saved = localStorage.getItem('yikeli_save_details');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  // Cart State (platId -> Quantity)
+  const [clientCart, setClientCart] = useState<Record<string, number>>({});
+
+  // Active Checkout state
+  const [isCheckoutStep, setIsCheckoutStep] = useState(false);
+  const [paymentType, setPaymentType] = useState<'total' | 'partiel'>('total');
+  const [partialAmountInput, setPartialAmountInput] = useState<number | ''>('');
+  const [clientPaymentMethod, setClientPaymentMethod] = useState<PaymentMethod>('ESPECE');
+
+  // Success summary popup
+  const [placedOrderInfo, setPlacedOrderInfo] = useState<Commande | null>(null);
+  const [orderComment, setOrderComment] = useState('');
+
+  // Live order tracker states
+  const [showTrackerModal, setShowTrackerModal] = useState(false);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [cancelReasonValue, setCancelReasonValue] = useState<string>("temps d'attente trop longue");
+  const [trackerPhoneInput, setTrackerPhoneInput] = useState(() => {
+    try {
+      return localStorage.getItem('yikeli_client_phone') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+
+  // Client Evaluations / Feedback Form State
+  const [feedbacks, setFeedbacks] = useState<Record<string, { repas: number; delai: number; courtoisie: number; comment?: string }>>({});
+
+  // Menu Search and Category Filter States
+  const [menuSearchQuery, setMenuSearchQuery] = useState('');
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState<string>('ALL');
+
   // Extract table number from text or URLs
   const extractTableNumber = (scannedText: string): number | null => {
     try {
@@ -105,29 +161,6 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
     }
   }, []);
 
-  const [clientName, setClientName] = useState(() => {
-    try {
-      return localStorage.getItem('yikeli_client_name') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [clientPhone, setClientPhone] = useState(() => {
-    try {
-      return localStorage.getItem('yikeli_client_phone') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [saveDetails, setSaveDetails] = useState(() => {
-    try {
-      const saved = localStorage.getItem('yikeli_save_details');
-      return saved === null ? true : saved === 'true';
-    } catch {
-      return true;
-    }
-  });
-
   const handleClearSavedDetails = () => {
     try {
       localStorage.removeItem('yikeli_client_name');
@@ -140,39 +173,6 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
       console.error(e);
     }
   };
-
-  // Cart State (platId -> Quantity)
-  const [clientCart, setClientCart] = useState<Record<string, number>>({});
-
-  // Active Checkout state
-  const [isCheckoutStep, setIsCheckoutStep] = useState(false);
-  const [paymentType, setPaymentType] = useState<'total' | 'partiel'>('total');
-  const [partialAmountInput, setPartialAmountInput] = useState<number | ''>('');
-  const [clientPaymentMethod, setClientPaymentMethod] = useState<PaymentMethod>('ESPECE');
-
-  // Success summary popup
-  const [placedOrderInfo, setPlacedOrderInfo] = useState<Commande | null>(null);
-  const [orderComment, setOrderComment] = useState('');
-
-  // Live order tracker states
-  const [showTrackerModal, setShowTrackerModal] = useState(false);
-  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
-  const [cancelReasonValue, setCancelReasonValue] = useState<string>("temps d'attente trop longue");
-  const [trackerPhoneInput, setTrackerPhoneInput] = useState(() => {
-    try {
-      return localStorage.getItem('yikeli_client_phone') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
-
-  // Client Evaluations / Feedback Form State
-  const [feedbacks, setFeedbacks] = useState<Record<string, { repas: number; delai: number; courtoisie: number; comment?: string }>>({});
-
-  // Menu Search and Category Filter States
-  const [menuSearchQuery, setMenuSearchQuery] = useState('');
-  const [selectedMenuCategory, setSelectedMenuCategory] = useState<string>('ALL');
 
   // Helper to translate categories to friendly names
   const getCategoryLabel = (category: string) => {
