@@ -21,6 +21,9 @@ import {
   fetchAllRestaurantsFromSupabase,
   syncUserToSupabase,
   fetchAllUsersFromSupabase,
+  syncPlatToSupabase,
+  deletePlatFromSupabase,
+  fetchAllPlatsFromSupabase,
   formatSupabaseRecordToCommande,
 } from './lib/supabase';
 import {
@@ -56,6 +59,51 @@ const generateUUID = () => {
   });
 };
 
+// --- SYSTÈME DE FILE D'ATTENTE DE SYNCHRONISATION HORS LIGNE (OFFLINE-FIRST) ---
+export interface OfflineAction {
+  id: string;
+  type: 'SYNC_ORDER' | 'SYNC_PLAT' | 'DELETE_PLAT' | 'SYNC_RESTAURANT' | 'SYNC_SETTINGS' | 'SYNC_PAIEMENT' | 'SYNC_DEPENSE' | 'SYNC_CLIENT' | 'SYNC_STOCK' | 'SYNC_USER' | 'SYNC_SUPPLIER';
+  restaurantId: string;
+  data: any;
+  timestamp: string;
+}
+
+const STORAGE_KEY_OFFLINE_QUEUE = 'yikeli_offline_sync_queue_v2';
+
+export function getOfflineQueue(): OfflineAction[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_OFFLINE_QUEUE);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function enqueueOfflineAction(action: OfflineAction): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const queue = getOfflineQueue();
+    // Déduplication intelligente par id et type
+    const filtered = queue.filter((item) => !(item.id === action.id && item.type === action.type));
+    filtered.push(action);
+    localStorage.setItem(STORAGE_KEY_OFFLINE_QUEUE, JSON.stringify(filtered));
+  } catch (err) {
+    console.warn('Erreur enqueueOfflineAction:', err);
+  }
+}
+
+export function removeOfflineAction(actionId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const queue = getOfflineQueue();
+    const updated = queue.filter((item) => item.id !== actionId);
+    localStorage.setItem(STORAGE_KEY_OFFLINE_QUEUE, JSON.stringify(updated));
+  } catch (err) {
+    console.warn('Erreur removeOfflineAction:', err);
+  }
+}
+
 // --- SYSTEM CACHE INDEXEDDB RESILIENCE RESEAU ---
 function openIndexedDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -88,6 +136,19 @@ async function saveToIndexedDB(key: string, data: any): Promise<void> {
   } catch (err) {
     console.warn('Erreur d\'écriture IndexedDB:', err);
   }
+}
+
+export function deduplicateById<T extends { id?: string | number }>(items: T[]): T[] {
+  if (!Array.isArray(items)) return [];
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (!item) return false;
+    const idKey = item.id !== undefined && item.id !== null ? String(item.id).trim() : '';
+    if (!idKey) return true;
+    if (seen.has(idKey)) return false;
+    seen.add(idKey);
+    return true;
+  });
 }
 
 export function useYikeliDb() {
@@ -126,18 +187,95 @@ export function useYikeliDb() {
     }
   };
 
-  // Statut Connexion Réseau Local / Internet
+  // Statut Connexion Réseau Local / Internet & File d'attente hors-ligne
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  const [offlineQueueCount, setOfflineQueueCount] = useState<number>(() => getOfflineQueue().length);
+  const [lastAutoSyncTime, setLastAutoSyncTime] = useState<string | null>(null);
+
+  // Traitement automatique de la file d'attente de synchronisation
+  const flushOfflineQueue = async (): Promise<{ success: boolean; syncedCount: number }> => {
+    if (typeof window === 'undefined' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      return { success: false, syncedCount: 0 };
+    }
+    const client = getSupabaseClient();
+    if (!client) {
+      return { success: false, syncedCount: 0 };
+    }
+
+    const queue = getOfflineQueue();
+    if (queue.length === 0) {
+      setOfflineQueueCount(0);
+      return { success: true, syncedCount: 0 };
+    }
+
+    let syncedCount = 0;
+    for (const item of queue) {
+      try {
+        let ok = false;
+        if (item.type === 'SYNC_ORDER') {
+          ok = await syncOrderToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_PLAT') {
+          ok = await syncPlatToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'DELETE_PLAT') {
+          ok = await deletePlatFromSupabase(item.data.id, item.restaurantId);
+        } else if (item.type === 'SYNC_RESTAURANT') {
+          ok = await syncRestaurantToSupabase(item.data);
+        } else if (item.type === 'SYNC_SETTINGS') {
+          ok = await syncSettingsToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_PAIEMENT') {
+          ok = await syncPaiementToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_DEPENSE') {
+          ok = await syncDepenseToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_CLIENT') {
+          ok = await syncClientToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_STOCK') {
+          ok = await syncStockEntryToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_USER') {
+          ok = await syncUserToSupabase(item.data, item.restaurantId);
+        } else if (item.type === 'SYNC_SUPPLIER') {
+          ok = await syncSupplierToSupabase(item.data, item.restaurantId);
+        }
+
+        if (ok) {
+          removeOfflineAction(item.id);
+          syncedCount++;
+        }
+      } catch (err) {
+        console.warn('Erreur synchronisation queue hors ligne:', err);
+      }
+    }
+
+    const remaining = getOfflineQueue().length;
+    setOfflineQueueCount(remaining);
+    if (syncedCount > 0) {
+      setLastAutoSyncTime(new Date().toLocaleTimeString('fr-FR'));
+      setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
+    }
+    return { success: remaining === 0, syncedCount };
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const handleOnline = () => setIsOffline(false);
+    const handleOnline = () => {
+      setIsOffline(false);
+      // Synchronisation automatique immédiate en cas de retour d'Internet
+      flushOfflineQueue();
+    };
     const handleOffline = () => setIsOffline(true);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
+    // Vérification périodique toutes les 5 secondes pour vider la file dès que le réseau est disponible
+    const queueInterval = setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine && getOfflineQueue().length > 0) {
+        flushOfflineQueue();
+      }
+    }, 5000);
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      clearInterval(queueInterval);
     };
   }, []);
 
@@ -193,7 +331,11 @@ export function useYikeliDb() {
     // 1. Plats
     const storedPlats = localStorage.getItem('yikeli_plats');
     if (storedPlats) {
-      setPlats(JSON.parse(storedPlats));
+      try {
+        setPlats(deduplicateById(JSON.parse(storedPlats)));
+      } catch {
+        setPlats(INITIAL_PLATS);
+      }
     } else {
       localStorage.setItem('yikeli_plats', JSON.stringify(INITIAL_PLATS));
       setPlats(INITIAL_PLATS);
@@ -242,12 +384,11 @@ export function useYikeliDb() {
           return nextUser;
         });
         
+        const deduplicatedUsers = deduplicateById(migrated ? updated : parsed);
         if (migrated) {
-          localStorage.setItem('yikeli_users', JSON.stringify(updated));
-          setUsers(updated);
-        } else {
-          setUsers(parsed);
+          localStorage.setItem('yikeli_users', JSON.stringify(deduplicatedUsers));
         }
+        setUsers(deduplicatedUsers);
       } catch (e) {
         localStorage.setItem('yikeli_users', JSON.stringify(INITIAL_USERS));
         setUsers(INITIAL_USERS);
@@ -260,7 +401,11 @@ export function useYikeliDb() {
     // 3. Clients
     const storedClients = localStorage.getItem('yikeli_clients');
     if (storedClients) {
-      setClients(JSON.parse(storedClients));
+      try {
+        setClients(deduplicateById(JSON.parse(storedClients)));
+      } catch {
+        setClients(INITIAL_CLIENTS);
+      }
     } else {
       localStorage.setItem('yikeli_clients', JSON.stringify(INITIAL_CLIENTS));
       setClients(INITIAL_CLIENTS);
@@ -269,7 +414,11 @@ export function useYikeliDb() {
     // 4. Commandes
     const storedCommandes = localStorage.getItem('yikeli_commandes');
     if (storedCommandes) {
-      setCommandes(JSON.parse(storedCommandes));
+      try {
+        setCommandes(deduplicateById(JSON.parse(storedCommandes)));
+      } catch {
+        setCommandes(INITIAL_COMMANDES);
+      }
     } else {
       localStorage.setItem('yikeli_commandes', JSON.stringify(INITIAL_COMMANDES));
       setCommandes(INITIAL_COMMANDES);
@@ -368,10 +517,11 @@ export function useYikeliDb() {
           }
           return r;
         });
-        if (hasChanges) {
-          localStorage.setItem('yikeli_restaurants', JSON.stringify(normalizedRests));
+        const deduplicatedRests = deduplicateById(normalizedRests);
+        if (hasChanges || deduplicatedRests.length !== parsedRests.length) {
+          localStorage.setItem('yikeli_restaurants', JSON.stringify(deduplicatedRests));
         }
-        setRestaurants(normalizedRests);
+        setRestaurants(deduplicatedRests);
       } catch (e) {
         setRestaurants(INITIAL_RESTAURANTS);
       }
@@ -457,19 +607,43 @@ export function useYikeliDb() {
   const saveAndSetPlatCategories = (newCats: string[]) => {
     localStorage.setItem('yikeli_plat_categories', JSON.stringify(newCats));
     setPlatCategories(newCats);
-    syncSettingsToSupabase({ platCategories: newCats }, activeRestaurantId).catch(() => {});
+    syncSettingsToSupabase({ platCategories: newCats }, activeRestaurantId).catch(() => {
+      enqueueOfflineAction({
+        id: 'sync-settings-platcats-' + Date.now(),
+        type: 'SYNC_SETTINGS',
+        data: { platCategories: newCats },
+        timestamp: new Date().toISOString(),
+        restaurantId: activeRestaurantId,
+      });
+    });
   };
 
   const saveAndSetPaymentMethods = (newMethods: string[]) => {
     localStorage.setItem('yikeli_payment_methods', JSON.stringify(newMethods));
     setPaymentMethods(newMethods);
-    syncSettingsToSupabase({ paymentMethods: newMethods }, activeRestaurantId).catch(() => {});
+    syncSettingsToSupabase({ paymentMethods: newMethods }, activeRestaurantId).catch(() => {
+      enqueueOfflineAction({
+        id: 'sync-settings-paymethods-' + Date.now(),
+        type: 'SYNC_SETTINGS',
+        data: { paymentMethods: newMethods },
+        timestamp: new Date().toISOString(),
+        restaurantId: activeRestaurantId,
+      });
+    });
   };
 
   const saveAndSetDepenseCategories = (newCats: string[]) => {
     localStorage.setItem('yikeli_depense_categories', JSON.stringify(newCats));
     setDepenseCategories(newCats);
-    syncSettingsToSupabase({ depenseCategories: newCats }, activeRestaurantId).catch(() => {});
+    syncSettingsToSupabase({ depenseCategories: newCats }, activeRestaurantId).catch(() => {
+      enqueueOfflineAction({
+        id: 'sync-settings-depcats-' + Date.now(),
+        type: 'SYNC_SETTINGS',
+        data: { depenseCategories: newCats },
+        timestamp: new Date().toISOString(),
+        restaurantId: activeRestaurantId,
+      });
+    });
   };
 
   const saveAndSetStockEntries = (newEntries: StockEntry[]) => {
@@ -580,6 +754,18 @@ export function useYikeliDb() {
     localStorage.setItem('yikeli_plats', JSON.stringify(newPlats));
     setPlats(newPlats);
     syncMenuSettings(newPlats, menuJour);
+
+    // Synchronisation directe et individuelle vers la table relationnelle yikeli_plats
+    newPlats.forEach((p) => {
+      syncPlatToSupabase(p, activeRestaurantId).catch(() => {});
+      enqueueOfflineAction({
+        id: `plat-${p.id}`,
+        type: 'SYNC_PLAT',
+        restaurantId: activeRestaurantId,
+        data: p,
+        timestamp: new Date().toISOString(),
+      });
+    });
   };
 
   const saveAndSetUsers = (newUsers: User[]) => {
@@ -621,6 +807,15 @@ export function useYikeliDb() {
         ...order,
         payments: orderPayments
       };
+
+      // Mettre en file d'attente hors-ligne résiliente
+      enqueueOfflineAction({
+        id: `order-${order.id}`,
+        type: 'SYNC_ORDER',
+        restaurantId: order.restaurantId || activeRestaurantId,
+        data: synchronizedOrder,
+        timestamp: new Date().toISOString(),
+      });
 
       const existing = localPrev.find(c => c.id === order.id);
       if (!existing || JSON.stringify(existing) !== JSON.stringify(synchronizedOrder)) {
@@ -805,6 +1000,14 @@ export function useYikeliDb() {
   const deletePlat = (id: string) => {
     const updated = plats.filter((p) => p.id !== id);
     saveAndSetPlats(updated);
+    deletePlatFromSupabase(id, activeRestaurantId).catch(() => {});
+    enqueueOfflineAction({
+      id: `del-plat-${id}`,
+      type: 'DELETE_PLAT',
+      restaurantId: activeRestaurantId,
+      data: { id },
+      timestamp: new Date().toISOString(),
+    });
     // clean menu jour too
     const filteredMenu = menuJour.filter((mId) => mId !== id);
     saveAndSetMenuJour(filteredMenu);
@@ -1018,12 +1221,31 @@ export function useYikeliDb() {
     });
 
     const total = commandeItems.reduce((acc, item) => acc + item.quantity * item.unitPrice, 0);
-    const commandeId = 'cmd-' + generateUUID();
+
+    // Format du numéro de commande demandé : cmd-{id_restaurant}-{00000000000} (facile à retenir et séquentiel)
+    const counterKey = `yikeli_order_counter_${activeRestaurantId}`;
+    let nextSeq = 1;
+    try {
+      const storedCount = localStorage.getItem(counterKey);
+      if (storedCount) {
+        nextSeq = parseInt(storedCount, 10) + 1;
+      } else {
+        const existingRestCmds = commandes.filter((c) => c.restaurantId === activeRestaurantId || c.id.startsWith(`cmd-${activeRestaurantId}-`));
+        nextSeq = existingRestCmds.length + 1;
+      }
+      localStorage.setItem(counterKey, String(nextSeq));
+    } catch {
+      nextSeq = commandes.length + 1;
+    }
+
+    const paddedNumber = String(nextSeq).padStart(11, '0');
+    const commandeId = `cmd-${activeRestaurantId}-${paddedNumber}`;
 
     const finalizedItems = commandeItems.map((item) => ({ ...item, commandeId }));
 
     const newCmd: Commande = {
       id: commandeId,
+      restaurantId: activeRestaurantId,
       clientId: client.id,
       clientName: validated.clientName || client.name,
       clientPhone: validated.clientPhone || client.phone,
@@ -1031,7 +1253,7 @@ export function useYikeliDb() {
       type: validated.type,
       tableNumber: validated.tableNumber ?? undefined,
       total,
-      status: validated.type === 'EN_LIGNE' ? 'ATTENTE_PAIEMENT' : 'EN_COURS',
+      status: 'EN_ATTENTE_PAIEMENT', // Statut initial synchronisé
       createdAt: new Date().toISOString(),
       items: finalizedItems,
       comment: validated.comment ?? '',
@@ -1526,16 +1748,14 @@ export function useYikeliDb() {
     const allOrderPays = updatedPaiements.filter((p) => p.commandeId === commandeId);
     const totalPaid = allOrderPays.reduce((acc, p) => acc + p.amount, 0);
 
+    // Règle métier demandée : "Le paiement total d'une commande sur place donne un statut 'payé non servi' la clôture est manuelle."
+    // Les statuts : "en attente de paiement, payée non servie, servie, remise au livreur, payée livrée et clôturée, annulée"
     const updatedCmds = currentCmds.map((cmd) => {
       if (cmd.id === commandeId) {
         let newStatus: CommandeStatus = cmd.status;
-        if (cmd.type !== 'EN_LIGNE') {
-          if (totalPaid >= cmd.total) {
-            newStatus = 'PAYEE';
-          } else if (cmd.status === 'EN_COURS') {
-            // If a payment was added on site, maybe it has progressed or was served
-            newStatus = 'SERVIE';
-          }
+        if (totalPaid >= cmd.total) {
+          // Commande totalement réglée -> "payée non servie" (la clôture/livraison reste manuelle)
+          newStatus = 'PAYEE_NON_SERVIE';
         }
         return { 
           ...cmd, 
@@ -2185,6 +2405,54 @@ export function useYikeliDb() {
           });
         }
 
+        // F. Plats Supabase relationnels (Synchronisation de yikeli_plats)
+        const directPlats = await fetchAllPlatsFromSupabase(activeRestaurantId);
+        if (Array.isArray(directPlats) && directPlats.length > 0) {
+          setPlats((localPlats) => {
+            let pUpdated = false;
+            const nextP = [...localPlats];
+            directPlats.forEach((dp) => {
+              const idx = nextP.findIndex((p) => p.id === dp.id);
+              if (idx === -1) {
+                nextP.push(dp);
+                pUpdated = true;
+              } else if (JSON.stringify(nextP[idx]) !== JSON.stringify(dp)) {
+                nextP[idx] = { ...nextP[idx], ...dp };
+                pUpdated = true;
+              }
+            });
+            if (pUpdated) {
+              localStorage.setItem('yikeli_plats', JSON.stringify(nextP));
+              return nextP;
+            }
+            return localPlats;
+          });
+        }
+
+        // G. Restaurants Supabase (Pour afficher tous les restaurants avec abonnement actif côté client)
+        const remoteRestaurants = await fetchAllRestaurantsFromSupabase();
+        if (Array.isArray(remoteRestaurants) && remoteRestaurants.length > 0) {
+          setRestaurants((localRests) => {
+            let rUpdated = false;
+            const nextR = [...localRests];
+            remoteRestaurants.forEach((rr) => {
+              const idx = nextR.findIndex((r) => r.id === rr.id);
+              if (idx === -1) {
+                nextR.push(rr);
+                rUpdated = true;
+              } else if (JSON.stringify(nextR[idx]) !== JSON.stringify(rr)) {
+                nextR[idx] = { ...nextR[idx], ...rr };
+                rUpdated = true;
+              }
+            });
+            if (rUpdated) {
+              localStorage.setItem('yikeli_restaurants', JSON.stringify(nextR));
+              return nextR;
+            }
+            return localRests;
+          });
+        }
+
         setSupabaseStatus('CONNECTED');
         setLastSyncTime(new Date().toLocaleTimeString('fr-FR'));
       } catch (err) {
@@ -2435,8 +2703,27 @@ export function useYikeliDb() {
   const saveAndSetRestaurants = (newRests: RestaurantTenant[]) => {
     localStorage.setItem('yikeli_restaurants', JSON.stringify(newRests));
     setRestaurants(newRests);
-    newRests.forEach((r) => {
-      syncRestaurantToSupabase(r).catch(() => {});
+    newRests.forEach(async (r) => {
+      try {
+        const ok = await syncRestaurantToSupabase(r);
+        if (!ok) {
+          enqueueOfflineAction({
+            id: 'sync-rest-' + r.id + '-' + Date.now(),
+            type: 'SYNC_RESTAURANT',
+            data: r,
+            timestamp: new Date().toISOString(),
+            restaurantId: r.id,
+          });
+        }
+      } catch {
+        enqueueOfflineAction({
+          id: 'sync-rest-' + r.id + '-' + Date.now(),
+          type: 'SYNC_RESTAURANT',
+          data: r,
+          timestamp: new Date().toISOString(),
+          restaurantId: r.id,
+        });
+      }
     });
   };
 
@@ -2473,6 +2760,7 @@ export function useYikeliDb() {
       const updatedUsers = [...users, newUser];
       localStorage.setItem('yikeli_users', JSON.stringify(updatedUsers));
       setUsers(updatedUsers);
+      syncUserToSupabase(newUser, newRest.id).catch(() => {});
     }
 
     return newRest;
@@ -2490,10 +2778,12 @@ export function useYikeliDb() {
     return found || null;
   };
 
-  const updateRestaurant = (id: string, data: Partial<RestaurantTenant>) => {
+  const updateRestaurant = async (id: string, data: Partial<RestaurantTenant>): Promise<boolean> => {
+    let targetRest: RestaurantTenant | null = null;
     const updated = restaurants.map((r) => {
       if (r.id === id) {
         const next = { ...r, ...data };
+        targetRest = next;
         if (data.adminUsername || data.adminPassword || data.managerName) {
           const userIndex = users.findIndex((u) => u.username === r.adminUsername || u.username === data.adminUsername);
           if (userIndex !== -1) {
@@ -2508,13 +2798,41 @@ export function useYikeliDb() {
             };
             localStorage.setItem('yikeli_users', JSON.stringify(updatedUsers));
             setUsers(updatedUsers);
+            syncUserToSupabase(updatedUsers[userIndex], id).catch(() => {});
           }
         }
         return next;
       }
       return r;
     });
+
     saveAndSetRestaurants(updated);
+
+    if (targetRest) {
+      try {
+        const ok = await syncRestaurantToSupabase(targetRest);
+        if (!ok) {
+          enqueueOfflineAction({
+            id: 'sync-rest-' + (targetRest as RestaurantTenant).id + '-' + Date.now(),
+            type: 'SYNC_RESTAURANT',
+            data: targetRest,
+            timestamp: new Date().toISOString(),
+            restaurantId: (targetRest as RestaurantTenant).id,
+          });
+        }
+        return ok;
+      } catch (err) {
+        enqueueOfflineAction({
+          id: 'sync-rest-' + (targetRest as RestaurantTenant).id + '-' + Date.now(),
+          type: 'SYNC_RESTAURANT',
+          data: targetRest,
+          timestamp: new Date().toISOString(),
+          restaurantId: (targetRest as RestaurantTenant).id,
+        });
+        return false;
+      }
+    }
+    return false;
   };
 
   const deleteRestaurant = (id: string) => {
@@ -2533,6 +2851,15 @@ export function useYikeliDb() {
   const updateSaaSPricing = (pricing: SaaSPricingConfig) => {
     localStorage.setItem('yikeli_saas_pricing', JSON.stringify(pricing));
     setSaasPricing(pricing);
+    syncSettingsToSupabase({ saasPricing: pricing }, activeRestaurantId).catch(() => {
+      enqueueOfflineAction({
+        id: 'sync-settings-saas-' + Date.now(),
+        type: 'SYNC_SETTINGS',
+        data: { saasPricing: pricing },
+        timestamp: new Date().toISOString(),
+        restaurantId: activeRestaurantId,
+      });
+    });
   };
 
   const setActiveRestaurantId = (id: string) => {
@@ -2625,6 +2952,9 @@ export function useYikeliDb() {
     isBackupSuccess,
     forceManualBackup,
     isOffline,
+    offlineQueueCount,
+    lastAutoSyncTime,
+    flushOfflineQueue,
     // Supabase Cloud Sync
     supabaseStatus,
     supabaseRealtimeActive,

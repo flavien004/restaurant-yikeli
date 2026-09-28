@@ -316,12 +316,12 @@ export default function SaaSLandingPage({
 
           {/* Interactive Feature Selectors */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800">
-            {features.map((f) => {
+            {features.map((f, idx) => {
               const Icon = f.icon;
               const isSelected = activeFeatureTab === f.id;
               return (
                 <button
-                  key={f.id}
+                  key={`feat-tab-${f.id}-${idx}`}
                   onClick={() => setActiveFeatureTab(f.id as any)}
                   className={`p-3 rounded-xl transition-all cursor-pointer text-center flex flex-col items-center gap-1.5 ${
                     isSelected
@@ -356,7 +356,7 @@ export default function SaaSLandingPage({
               {/* Bullet Points */}
               <div className="space-y-3 pt-2">
                 {currentFeature.bullets.map((b, idx) => (
-                  <div key={idx} className="flex items-start gap-3">
+                  <div key={`feat-bullet-${idx}`} className="flex items-start gap-3">
                     <div className="p-1 rounded-full bg-emerald-500/20 text-emerald-400 shrink-0 mt-0.5">
                       <Check className="w-3.5 h-3.5" />
                     </div>

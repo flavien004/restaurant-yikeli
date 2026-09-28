@@ -58,9 +58,8 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   localStats,
   onConfigChanged
 }) => {
-  const [activeTab, setActiveTab] = useState<'config' | 'sync' | 'sql'>('config');
+  const [activeTab, setActiveTab] = useState<'sync' | 'config' | 'sql'>('sync');
   const [urlInput, setUrlInput] = useState('');
-  const [keyInput, setKeyInput] = useState('');
   const [configSource, setConfigSource] = useState<'env' | 'localStorage' | 'none'>('none');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
@@ -68,47 +67,19 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   const [isPushing, setIsPushing] = useState(false);
   const [pushResult, setPushResult] = useState<{ success: boolean; message: string } | null>(null);
   const [copiedSql, setCopiedSql] = useState(false);
-  const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       const currentConfig = getSupabaseConfig();
       setUrlInput(currentConfig.url);
-      setKeyInput(currentConfig.anonKey);
       setConfigSource(currentConfig.source);
-      setSaveFeedback(null);
       setPushResult(null);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSaveConfig = () => {
-    saveSupabaseConfig(urlInput, keyInput);
-    const updated = getSupabaseConfig();
-    setConfigSource(updated.source);
-    setSaveFeedback('Configuration enregistrée avec succès !');
-    onConfigChanged();
-    setTimeout(() => setSaveFeedback(null), 3500);
-  };
-
-  const handleClearConfig = () => {
-    saveSupabaseConfig('', '');
-    const updated = getSupabaseConfig();
-    setUrlInput(updated.url);
-    setKeyInput(updated.anonKey);
-    setConfigSource(updated.source);
-    setTestResult(null);
-    setSaveFeedback('Configuration locale réinitialisée.');
-    onConfigChanged();
-    setTimeout(() => setSaveFeedback(null), 3000);
-  };
-
   const handleTestConnection = async () => {
-    // Si l'utilisateur a modifié les champs sans sauvegarder, sauvegarder d'abord
-    saveSupabaseConfig(urlInput, keyInput);
-    onConfigChanged();
-
     setIsTesting(true);
     setTestResult(null);
     try {
@@ -270,97 +241,72 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         {/* Body content */}
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
           
-          {/* TAB 1: CONFIGURATION */}
+          {/* TAB 1: CONFIGURATION (LECTURE SEULE ENVIRONNEMENT NETLIFY) */}
           {activeTab === 'config' && (
             <div className="space-y-5">
-              <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 text-xs text-amber-900 space-y-1.5">
-                <div className="flex items-center gap-2 font-bold text-amber-950">
-                  <Info className="w-4 h-4 text-amber-600" />
-                  Comment fonctionne la synchronisation avec Supabase ?
+              <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-950 space-y-2">
+                <div className="flex items-center gap-2 font-extrabold text-emerald-900 text-sm">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  Configuration Verrouillée & Gérée par Netlify
                 </div>
-                <p className="leading-relaxed">
-                  L'application hébergée sur Netlify communique directement avec votre base de données Supabase.
-                  Les commandes créées par le client via QR code, la caisse et les tablettes serveurs se propagent en temps réel (<strong className="font-semibold">&lt; 100 ms</strong>) grâce aux WebSockets Supabase Realtime.
+                <p className="leading-relaxed text-emerald-900">
+                  Conformément aux règles de sécurité, les variables d'environnement Supabase (<code className="bg-emerald-100 font-mono font-bold px-1.5 py-0.5 rounded text-emerald-900">VITE_SUPABASE_URL</code> et <code className="bg-emerald-100 font-mono font-bold px-1.5 py-0.5 rounded text-emerald-900">VITE_SUPABASE_ANON_KEY</code>) sont déjà enregistrées sur Netlify et ne sont pas manipulables par l'administrateur.
                 </p>
-                <p className="text-[11px] text-amber-800">
-                  💡 <strong>Astuce Netlify :</strong> Vous pouvez renseigner ces deux clés soit directement dans ce formulaire (enregistré sur ce navigateur), soit dans les variables d'environnement de votre site Netlify : <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">VITE_SUPABASE_URL</code> et <code className="bg-amber-100 px-1 py-0.5 rounded font-mono">VITE_SUPABASE_ANON_KEY</code>.
+                <p className="text-[11px] text-emerald-800 font-medium">
+                  ✓ Les clés restent persistantes et protégées sans risque d'écrasement intempestif ou d'oubli lors des reconnexions.
                 </p>
               </div>
 
               <div className="space-y-4 bg-gray-50/70 p-5 rounded-2xl border border-gray-200/70">
                 <div className="space-y-1.5">
                   <label className="text-xs font-extrabold text-slate-800 flex items-center justify-between">
-                    <span>1. URL du Projet Supabase (Project URL)</span>
-                    <span className="text-[10px] text-gray-400 font-mono">Ex: https://xyzcompany.supabase.co</span>
+                    <span>1. URL du Serveur Supabase</span>
+                    <span className="text-[10px] text-emerald-700 font-bold bg-emerald-100 px-2 py-0.5 rounded-full">Automatique</span>
                   </label>
-                  <input
-                    type="text"
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                    placeholder="https://your-project-id.supabase.co"
-                    className="w-full text-xs font-mono px-3.5 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white shadow-inner"
-                  />
+                  <div className="w-full text-xs font-mono px-3.5 py-2.5 rounded-xl border border-gray-200 bg-white shadow-inner text-slate-700 select-all flex items-center justify-between">
+                    <span>{urlInput ? urlInput.replace(/:\/\/([^.]+)\./, '://$1.***.') : 'Configurée via variable d\'environnement Netlify'}</span>
+                    <span className="text-[10px] text-slate-400 font-sans font-semibold">Netlify Env</span>
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-extrabold text-slate-800 flex items-center justify-between">
-                    <span>2. Clé Publique Supabase (Anon / Public Key)</span>
-                    <span className="text-[10px] text-gray-400 font-mono">eyJhbGciOiJIUzI1NiIsIn...</span>
+                    <span>2. Clé d'API Anonyme (Anon Key)</span>
+                    <span className="text-[10px] text-emerald-700 font-bold bg-emerald-100 px-2 py-0.5 rounded-full">Protégée</span>
                   </label>
-                  <input
-                    type="password"
-                    value={keyInput}
-                    onChange={(e) => setKeyInput(e.target.value)}
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    className="w-full text-xs font-mono px-3.5 py-2.5 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white shadow-inner"
-                  />
-                  <p className="text-[10px] text-gray-500">
-                    Trouvez cette clé dans votre tableau de bord Supabase : <strong>Project Settings &gt; API &gt; Project API keys &gt; anon / public</strong>.
-                  </p>
-                </div>
-
-                {saveFeedback && (
-                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-medium flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    {saveFeedback}
+                  <div className="w-full text-xs font-mono px-3.5 py-2.5 rounded-xl border border-gray-200 bg-white shadow-inner text-slate-700 flex items-center justify-between">
+                    <span>••••••••••••••••••••••••••••••••••••••••••••••••</span>
+                    <span className="text-[10px] text-slate-400 font-sans font-semibold">Vérifiée</span>
                   </div>
-                )}
+                </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 pt-2">
                   <button
                     onClick={handleTestConnection}
-                    disabled={isTesting || !urlInput || !keyInput}
-                    className="px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 text-xs font-bold transition flex items-center gap-1.5 shadow"
+                    disabled={isTesting}
+                    className="px-4 py-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 text-xs font-bold transition flex items-center gap-1.5 shadow cursor-pointer active:scale-95"
                   >
                     {isTesting ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Test de liaison en cours...
+                        Vérification de liaison en cours...
                       </>
                     ) : (
                       <>
                         <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                        Tester la connexion
+                        Tester la connexion Supabase
                       </>
                     )}
                   </button>
 
                   <button
-                    onClick={handleSaveConfig}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow"
+                    onClick={handleManualSync}
+                    disabled={isSyncing}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow cursor-pointer active:scale-95"
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Enregistrer la configuration
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    {isSyncing ? 'Synchronisation...' : 'Synchroniser maintenant'}
                   </button>
-
-                  {configSource === 'localStorage' && (
-                    <button
-                      onClick={handleClearConfig}
-                      className="px-3 py-2 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-bold transition"
-                    >
-                      Effacer la clé locale
-                    </button>
-                  )}
                 </div>
               </div>
 

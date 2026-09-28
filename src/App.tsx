@@ -146,6 +146,21 @@ export default function App() {
     };
   }, [db]);
 
+  // Badge instantané des nouvelles commandes / commandes en attente
+  const pendingOrdersCount = useMemo(() => {
+    const activeRestId = activeRest?.id;
+    return db.commandes.filter((c) => {
+      if (c.restaurantId && activeRestId && c.restaurantId !== activeRestId) return false;
+      return (
+        c.status === 'EN_ATTENTE_PAIEMENT' ||
+        c.status === 'ATTENTE_PAIEMENT' ||
+        c.status === 'EN_COURS' ||
+        c.status === 'PAYEE_NON_SERVIE' ||
+        c.status === 'DEMANDE_ANNULATION'
+      );
+    }).length;
+  }, [db.commandes, activeRest?.id]);
+
   const isClientView = currentRoleView === 'client';
 
   return (
@@ -223,14 +238,19 @@ export default function App() {
                 <button
                   onClick={() => setCurrentRoleView('employe')}
                   id="nav-employe"
-                  className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer relative ${
                     currentRoleView === 'employe'
                       ? 'bg-orange-500 text-white shadow'
                       : 'text-gray-300 hover:text-white'
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
-                  Caisse POS
+                  <span>Caisse POS</span>
+                  {pendingOrdersCount > 0 && (
+                    <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-extrabold text-white ring-2 ring-slate-900 animate-pulse">
+                      {pendingOrdersCount}
+                    </span>
+                  )}
                 </button>
 
                 <button

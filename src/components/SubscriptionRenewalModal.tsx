@@ -288,9 +288,9 @@ export default function SubscriptionRenewalModal({
                     2. Durée du renouvellement
                   </label>
                   <div className="grid grid-cols-4 gap-2 text-xs font-bold">
-                    {[1, 3, 6, 12].map((m) => (
+                    {[1, 3, 6, 12].map((m, idx) => (
                       <button
-                        key={m}
+                        key={`sub-month-${m}-${idx}`}
                         type="button"
                         onClick={() => setDurationMonths(m)}
                         className={`py-2 px-3 rounded-xl border transition text-center cursor-pointer ${
@@ -318,9 +318,9 @@ export default function SubscriptionRenewalModal({
                     { key: 'MTN', label: 'MTN 💛', color: 'border-amber-400 bg-amber-50/40' },
                     { key: 'MOOV', label: 'Moov 💚', color: 'border-emerald-400 bg-emerald-50/40' },
                     { key: 'CARTE', label: 'Carte 💳', color: 'border-indigo-400 bg-indigo-50/40' },
-                  ].map((pm) => (
+                  ].map((pm, idx) => (
                     <button
-                      key={pm.key}
+                      key={`sub-pm-${pm.key}-${idx}`}
                       type="button"
                       onClick={() => setPaymentMethod(pm.key as any)}
                       className={`py-2.5 px-2 rounded-xl border text-[11px] font-black transition text-center cursor-pointer ${

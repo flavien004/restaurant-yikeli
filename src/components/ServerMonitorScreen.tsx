@@ -193,7 +193,7 @@ export default function ServerMonitorScreen({ db }: ServerMonitorScreenProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {servedOrders.map((order) => {
+          {servedOrders.map((order, idx) => {
             const parsedOrderId = order.id.includes('-') ? order.id.split('-')[1] : order.id;
             const isSurPlace = order.type === 'SUR_PLACE';
             const isUnpaidSurPlace = isSurPlace && getAmountPaidForOrder(order.id) === 0;
@@ -207,7 +207,7 @@ export default function ServerMonitorScreen({ db }: ServerMonitorScreenProps) {
 
             return (
               <div 
-                key={order.id} 
+                key={`monitor-order-${order.id}-${idx}`} 
                 className={`bg-[#0f172a] border-2 rounded-2xl overflow-hidden hover:shadow-lg transition-all flex flex-col justify-between ${
                   isUnpaidSurPlace ? 'border-red-500/80 hover:border-red-500 shadow-red-950/20 shadow-md animate-pulse' : 'border-orange-500/45 hover:border-orange-500'
                 }`}
@@ -256,7 +256,7 @@ export default function ServerMonitorScreen({ db }: ServerMonitorScreenProps) {
                   
                   <div className="space-y-2">
                     {order.items.map((it, idx) => (
-                      <div key={idx} className="flex justify-between items-start text-xs border-b border-slate-800/40 pb-1.5 font-medium">
+                      <div key={`monitor-item-${it.id || it.platId || idx}-${idx}`} className="flex justify-between items-start text-xs border-b border-slate-800/40 pb-1.5 font-medium">
                         <span className="text-slate-200">
                           <span className="text-orange-400 font-extrabold text-sm mr-1.5">x{it.quantity}</span> 
                           {it.platName}

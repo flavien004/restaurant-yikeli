@@ -585,7 +585,7 @@ export default function SuperAdminSaaS({
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {filteredRestaurants.map((r) => {
+            {filteredRestaurants.map((r, idx) => {
               const daysLeft = getDaysRemaining(r.subscriptionEndDate);
               const isExpired = daysLeft < 0 || r.status === 'EXPIRE';
               const isSuspended = r.status === 'SUSPENDU';
@@ -596,7 +596,7 @@ export default function SuperAdminSaaS({
 
               return (
                 <div
-                  key={r.id}
+                  key={`saas-rest-${r.id}-${idx}`}
                   className={`bg-white border rounded-2xl p-6 transition duration-200 shadow-sm hover:shadow-md flex flex-col justify-between space-y-5 relative ${
                     isCurrentlyActiveTenant
                       ? 'border-orange-500 ring-2 ring-orange-500/20'

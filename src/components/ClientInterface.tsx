@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useYikeliDb } from '../db';
-import { Plat, PaymentMethod, Commande } from '../types';
+import { Plat, PaymentMethod, Commande, RestaurantTenant, formatCommandeStatusLabel, getCommandeStatusBadgeClass } from '../types';
 import { CommandeValidationSchema } from '../validation';
 import Logo from './Logo';
 import QRScanner from './QRScanner';
@@ -18,6 +18,7 @@ import {
   AlertCircle,
   HelpCircle,
   ArrowRight,
+  ArrowLeft,
   Sparkles,
   UtensilsCrossed,
   Receipt,
@@ -30,6 +31,9 @@ import {
   XCircle,
   Camera,
   RotateCw,
+  Building2,
+  Store,
+  CheckCircle2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -113,6 +117,54 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
   // Menu Search and Category Filter States
   const [menuSearchQuery, setMenuSearchQuery] = useState('');
   const [selectedMenuCategory, setSelectedMenuCategory] = useState<string>('ALL');
+
+  // Sélection du restaurant par le client
+  const [selectedRestaurantId, setSelectedRestaurantId] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlResto = params.get('resto') || params.get('restaurant') || params.get('r');
+      if (urlResto) return urlResto;
+      const savedResto = sessionStorage.getItem('yikeli_client_selected_restaurant');
+      if (savedResto) return savedResto;
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [restaurantSearchQuery, setRestaurantSearchQuery] = useState('');
+
+  // Restaurants avec abonnement ACTIF dans la base de données
+  const activeRestaurants = useMemo(() => {
+    return (db.restaurants || []).filter((r) => r.status === 'ACTIF');
+  }, [db.restaurants]);
+
+  const filteredRestaurants = useMemo(() => {
+    const q = restaurantSearchQuery.toLowerCase().trim();
+    if (!q) return activeRestaurants;
+    return activeRestaurants.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        (r.slogan && r.slogan.toLowerCase().includes(q)) ||
+        (r.address && r.address.toLowerCase().includes(q))
+    );
+  }, [activeRestaurants, restaurantSearchQuery]);
+
+  const handleSelectRestaurant = (restoId: string) => {
+    db.setActiveRestaurantId(restoId);
+    setSelectedRestaurantId(restoId);
+    try {
+      sessionStorage.setItem('yikeli_client_selected_restaurant', restoId);
+    } catch {}
+    setClientCart({});
+  };
+
+  const handleReturnToRestaurantList = () => {
+    setSelectedRestaurantId(null);
+    try {
+      sessionStorage.removeItem('yikeli_client_selected_restaurant');
+    } catch {}
+  };
 
   // Extract table number from text or URLs
   const extractTableNumber = (scannedText: string): number | null => {
@@ -407,9 +459,232 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
 
   const activeRest = db.activeRestaurant;
 
+  // 1. PAGE D'ACCUEIL CLIENT : SÉLECTION DES RESTAURANTS AVEC ABONNEMENT ACTIF
+  if (!selectedRestaurantId) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6 pb-20 px-3 sm:px-4" id="client-directory-parent">
+        {/* Hero banner d'accueil */}
+        <div className="bg-gradient-to-br from-orange-600 via-amber-600 to-orange-500 rounded-3xl p-6 sm:p-8 text-white text-center space-y-4 shadow-xl relative overflow-hidden">
+          <div className="absolute -right-10 -top-10 w-36 h-36 bg-white/10 rounded-full blur-2xl"></div>
+          <div className="absolute -left-10 -bottom-10 w-28 h-28 bg-white/10 rounded-full blur-2xl"></div>
+
+          <div className="relative z-10 space-y-3">
+            <span className="text-[10px] font-extrabold uppercase tracking-widest bg-white/20 text-white px-3.5 py-1 rounded-full border border-white/30 inline-flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+              Plateforme Digitale Resto • Côte d'Ivoire
+            </span>
+            <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight">
+              Bienvenue sur Yikéli Resto
+            </h1>
+            <p className="text-xs sm:text-sm text-orange-100 max-w-lg mx-auto font-medium leading-relaxed">
+              Choisissez votre restaurant partenaire actif pour consulter son menu digital en direct, commander sur place ou vous faire livrer !
+            </p>
+
+            {/* Quick Actions */}
+            <div className="flex flex-wrap justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowTrackerModal(true)}
+                className="bg-white/20 hover:bg-white/30 text-white font-extrabold text-[11px] px-4 py-2 rounded-xl border border-white/20 shadow-sm transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider"
+              >
+                <Receipt className="w-3.5 h-3.5 text-yellow-300" />
+                Suivre ma Commande 🛵
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowScanner(true)}
+                className="bg-yellow-400 hover:bg-yellow-350 text-slate-950 font-extrabold text-[11px] px-4 py-2 rounded-xl border border-yellow-300 shadow-md transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                Scanner un QR Code 📱
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(true)}
+                className="bg-white/20 hover:bg-white/30 text-white font-extrabold text-[11px] px-4 py-2 rounded-xl border border-white/20 shadow-sm transition flex items-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-yellow-300" />
+                Aide & Guide ❓
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Barre de Recherche rapide */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Rechercher par nom d'établissement, quartier (ex: Abatta, Angré, Cocody)..."
+            value={restaurantSearchQuery}
+            onChange={(e) => setRestaurantSearchQuery(e.target.value)}
+            className="w-full bg-white border border-gray-200 rounded-2xl pl-10 pr-4 py-3 text-xs sm:text-sm text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium"
+          />
+        </div>
+
+        {/* Grille des Restaurants Actifs */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between text-xs text-gray-650 font-bold px-1">
+            <span className="uppercase tracking-wider">Restaurants Ouverts &amp; Actifs ({filteredRestaurants.length})</span>
+            <span className="text-[11px] text-emerald-600 font-extrabold flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Abonnements Actifs
+            </span>
+          </div>
+
+          {filteredRestaurants.length === 0 ? (
+            <div className="bg-white rounded-2xl p-10 text-center border border-gray-150 space-y-2">
+              <Store className="w-10 h-10 text-gray-300 mx-auto" />
+              <p className="text-sm font-bold text-gray-700">Aucun restaurant disponible pour cette recherche</p>
+              <p className="text-xs text-gray-400">Essayez un autre mot-clé ou réinitialisez la recherche.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredRestaurants.map((resto, idx) => (
+                <div
+                  key={`client-resto-${resto.id}-${idx}`}
+                  onClick={() => handleSelectRestaurant(resto.id)}
+                  className="bg-white rounded-2xl p-5 border border-gray-200 hover:border-orange-400 hover:shadow-lg transition-all duration-200 cursor-pointer flex flex-col justify-between group active:scale-[0.99] space-y-4"
+                >
+                  <div className="flex items-start gap-3.5">
+                    <Logo
+                      size="sm"
+                      width={56}
+                      height={56}
+                      logoUrl={resto.logo}
+                      restaurantName={resto.name}
+                      className="rounded-2xl overflow-hidden bg-white p-1 border border-gray-150 shadow-xs shrink-0"
+                    />
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-extrabold text-base text-gray-900 group-hover:text-orange-600 transition truncate">
+                          {resto.name}
+                        </h3>
+                        <span className="text-[9px] bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
+                          ACTIF
+                        </span>
+                      </div>
+                      {resto.slogan && (
+                        <p className="text-xs text-gray-500 line-clamp-1 italic">
+                          "{resto.slogan}"
+                        </p>
+                      )}
+                      <p className="text-[11px] text-gray-600 flex items-center gap-1 line-clamp-1">
+                        <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                        <span>{resto.address || "Abidjan, Côte d'Ivoire"}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-gray-500 font-mono flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-gray-400" />
+                      <span>{resto.whatsapp || resto.contacts || resto.managerPhone || '+225 05 01 14 92 44'}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectRestaurant(resto.id);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs transition shadow-sm flex items-center gap-1.5 shrink-0"
+                    >
+                      <span>Voir le Menu</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Live tracker modal */}
+        {showTrackerModal && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl relative space-y-4 my-8 text-gray-850"
+            >
+              <button
+                onClick={() => setShowTrackerModal(false)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 focus:outline-none"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <div className="flex items-center gap-2 text-orange-600 border-b border-gray-100 pb-3">
+                <ChefHat className="w-5 h-5" />
+                <h3 className="text-base font-extrabold">Suivi de Commande en Direct</h3>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Rechercher par Numéro de Téléphone</label>
+                <input
+                  type="text"
+                  placeholder="Ex: 0716614669"
+                  value={trackerPhoneInput}
+                  onChange={(e) => setTrackerPhoneInput(e.target.value)}
+                  className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono font-bold text-gray-800 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                />
+              </div>
+              <p className="text-xs text-gray-500 text-center py-2">
+                Saisissez votre numéro de téléphone pour voir l'état synchronisé de vos commandes.
+              </p>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Scanner QR Modal */}
+        {showScanner && (
+          <QRScanner
+            onScanSuccess={(detected) => {
+              const tableNum = extractTableNumber(detected);
+              if (tableNum) {
+                setTableNumber(tableNum);
+                setShowScanner(false);
+                return true;
+              }
+              return false;
+            }}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
+
+        {/* Interactive Help Modal */}
+        {showHelpModal && (
+          <InteractiveHelpModal
+            type="client"
+            onClose={() => setShowHelpModal(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // 2. VUE MENU DU RESTAURANT SÉLECTIONNÉ
   return (
     <div className="max-w-xl mx-auto space-y-6 pb-20" id="client-view-parent">
       
+      {/* Top Banner de retour aux restaurants */}
+      <div className="flex items-center justify-between bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-sm text-xs">
+        <div className="flex items-center gap-2 truncate">
+          <Store className="w-4 h-4 text-orange-400 shrink-0" />
+          <span className="truncate">Restaurant sélectionné : <strong className="text-white">{activeRest?.name}</strong></span>
+        </div>
+        <button
+          type="button"
+          onClick={handleReturnToRestaurantList}
+          className="text-[11px] font-bold text-orange-400 hover:text-orange-300 flex items-center gap-1 shrink-0 ml-2 cursor-pointer transition hover:underline"
+        >
+          <ArrowLeft className="w-3 h-3" />
+          <span>Changer de restaurant</span>
+        </button>
+      </div>
+
       {/* Front Hero banner */}
       <div className="bg-gradient-to-br from-orange-500 to-amber-600 rounded-3xl p-6 text-white text-center space-y-4 shadow-xl relative overflow-hidden">
         
@@ -551,9 +826,9 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
             >
               Tout le menu
             </button>
-            {availableCategories.map((cat) => (
+            {availableCategories.map((cat, idx) => (
               <button
-                key={cat}
+                key={`client-cat-${cat}-${idx}`}
                 onClick={() => setSelectedMenuCategory(cat)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
                   selectedMenuCategory === cat
@@ -897,7 +1172,7 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                           >
                             <option value="">Table (Manuel)</option>
                             {[...Array(20)].map((_, i) => (
-                              <option key={i + 1} value={i + 1}>
+                              <option key={`client-table-opt-${i + 1}`} value={i + 1}>
                                 Table {i + 1}
                               </option>
                             ))}
@@ -999,9 +1274,9 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
             >
               {/* Confetti Particle Explosion */}
               <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
-                {confettiPieces.map((piece) => (
+                {confettiPieces.map((piece, idx) => (
                   <motion.div
-                    key={piece.id}
+                    key={`confetti-${piece.id}-${idx}`}
                     initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
                     animate={{
                       x: piece.x,
@@ -1162,20 +1437,20 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                   return matchingOrders.map((order, idx) => {
                     const isExpanded = expandedOrderId === order.id;
                     const hasPayments = (db.paiements || []).some(p => p.commandeId === order.id && p.amount > 0);
-                    const initialStepLabel = order.type === 'SUR_PLACE' && !hasPayments ? 'À servir 🍽️' : 'Payé non servi 💵';
-                    const initialStepDesc = order.type === 'SUR_PLACE' && !hasPayments ? 'Attente de service à votre table' : 'Portion chaude prête pour service';
                     const steps = [
-                      { label: initialStepLabel, desc: initialStepDesc, active: true, matching: ['EN_COURS', 'ATTENTE_PAIEMENT'] },
-                      { label: 'Prêt / Servi 🍽️', desc: 'Prêt sur table ou emballé', active: ['SERVIE', 'PRET_A_LIVRER', 'EN_LIVRAISON', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['SERVIE', 'PRET_A_LIVRER'] },
-                      { label: 'En Route 🛵', desc: 'Remis au livreur / Yango', active: ['EN_LIVRAISON', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['EN_LIVRAISON'] },
-                      { label: 'Livrée avec succès 🎉', desc: 'Régalez-vous !', active: ['LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status), matching: ['LIVREE', 'PAYEE', 'REFUS_ANNULATION'] }
+                      { label: 'En attente de paiement 💳', desc: 'Commande enregistrée, en attente de validation/règlement', matching: ['EN_ATTENTE_PAIEMENT', 'ATTENTE_PAIEMENT', 'EN_COURS'] },
+                      { label: 'Payée non servie 🍳', desc: 'Règlement effectué, préparation en cuisine lancée', matching: ['PAYEE_NON_SERVIE'] },
+                      { label: 'Servie 🍽️', desc: 'Plat dressé et servi à table', matching: ['SERVIE', 'PRET_A_LIVRER'] },
+                      { label: 'Remise au livreur 🛵', desc: 'Prise en charge par le coursier / livreur Yango', matching: ['REMISE_LIVREUR', 'EN_LIVRAISON'] },
+                      { label: 'Payée livrée et clôturée 🎉', desc: 'Commande livrée et clôturée avec succès', matching: ['PAYEE_LIVREE_CLOTUREE', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'] }
                     ];
 
                     // Helper to get active step index
                     let activeStepIndex = 0;
-                    if (['SERVIE', 'PRET_A_LIVRER'].includes(order.status)) activeStepIndex = 1;
-                    else if (order.status === 'EN_LIVRAISON') activeStepIndex = 2;
-                    else if (['LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status)) activeStepIndex = 3;
+                    if (['PAYEE_NON_SERVIE'].includes(order.status)) activeStepIndex = 1;
+                    else if (['SERVIE', 'PRET_A_LIVRER'].includes(order.status)) activeStepIndex = 2;
+                    else if (['REMISE_LIVREUR', 'EN_LIVRAISON'].includes(order.status)) activeStepIndex = 3;
+                    else if (['PAYEE_LIVREE_CLOTUREE', 'LIVREE', 'PAYEE', 'REFUS_ANNULATION'].includes(order.status)) activeStepIndex = 4;
 
                     return (
                       <div key={`${order.id}-${idx}`} className="border border-gray-150 rounded-2xl p-4 space-y-3.5 hover:shadow-sm transition bg-white text-left">
@@ -1382,7 +1657,7 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                                   <div className="flex gap-1">
                                     {[1, 2, 3, 4, 5].map((star) => (
                                       <button
-                                        key={star}
+                                        key={`repas-star-${order.id}-${star}`}
                                         type="button"
                                         onClick={() => {
                                           setFeedbacks(prev => ({
@@ -1406,7 +1681,7 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                                   <div className="flex gap-1">
                                     {[1, 2, 3, 4, 5].map((star) => (
                                       <button
-                                        key={star}
+                                        key={`delai-star-${order.id}-${star}`}
                                         type="button"
                                         onClick={() => {
                                           setFeedbacks(prev => ({
@@ -1430,7 +1705,7 @@ export default function ClientInterface({ db }: ClientInterfaceProps) {
                                   <div className="flex gap-1">
                                     {[1, 2, 3, 4, 5].map((star) => (
                                       <button
-                                        key={star}
+                                        key={`courtoisie-star-${order.id}-${star}`}
                                         type="button"
                                         onClick={() => {
                                           setFeedbacks(prev => ({

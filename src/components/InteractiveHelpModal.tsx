@@ -397,9 +397,9 @@ export default function InteractiveHelpModal({ type, onClose }: InteractiveHelpM
           {/* Sidebar Menu */}
           <div className="w-full md:w-64 bg-slate-50 border-r border-slate-100 p-4 shrink-0 space-y-2">
             <span className="text-[9px] font-black tracking-widest text-slate-400 uppercase block mb-2 px-2">Sujets d'aide</span>
-            {topics.map((topic) => (
+            {topics.map((topic, idx) => (
               <button
-                key={topic.id}
+                key={`help-topic-${topic.id}-${idx}`}
                 type="button"
                 onClick={() => handleTopicChange(topic.id)}
                 className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-left text-xs font-bold transition-all cursor-pointer ${
@@ -430,7 +430,7 @@ export default function InteractiveHelpModal({ type, onClose }: InteractiveHelpM
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Étapes pas à pas</span>
                 <div className="relative border-l border-slate-200 ml-3 pl-5 space-y-5">
                   {selectedTopic.steps.map((step, idx) => (
-                    <div key={idx} className="relative">
+                    <div key={`help-step-${selectedTopic.id}-${idx}`} className="relative">
                       {/* Step marker bubble */}
                       <span className="absolute -left-[29px] top-0 w-4 h-4 bg-orange-600 text-white rounded-full flex items-center justify-center text-[9px] font-bold border-2 border-white shadow-xs">
                         {idx + 1}
@@ -465,7 +465,7 @@ export default function InteractiveHelpModal({ type, onClose }: InteractiveHelpM
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {selectedTopic.interactiveDemo.options.map((opt, idx) => (
                       <button
-                        key={idx}
+                        key={`help-demo-opt-${selectedTopic.id}-${idx}`}
                         type="button"
                         onClick={() => setDemoSelection(idx)}
                         className={`p-3 rounded-xl border text-left text-xs transition duration-200 cursor-pointer ${

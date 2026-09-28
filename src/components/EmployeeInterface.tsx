@@ -410,10 +410,20 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
     }
   };
 
-  // Find all online orders that are still EN_COURS (pending in queue)
+  // Find all new/pending orders that require attention (instant notification badge)
   const pendingOnlineOrders = useMemo(() => {
-    return db.commandes.filter((c) => c.type === 'EN_LIGNE' && c.status === 'EN_COUR' || (c.type === 'EN_LIGNE' && c.status === 'EN_COURS'));
-  }, [db.commandes]);
+    const activeRestId = db.activeRestaurant?.id;
+    return db.commandes.filter((c) => {
+      if (c.restaurantId && activeRestId && c.restaurantId !== activeRestId) return false;
+      return (
+        c.status === 'EN_ATTENTE_PAIEMENT' ||
+        c.status === 'ATTENTE_PAIEMENT' ||
+        c.status === 'EN_COURS' ||
+        c.status === 'PAYEE_NON_SERVIE' ||
+        c.status === 'DEMANDE_ANNULATION'
+      );
+    });
+  }, [db.commandes, db.activeRestaurant?.id]);
 
   React.useEffect(() => {
     // Diff-tracker for real-time order states
@@ -716,11 +726,11 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {db.plats
                     .filter((p) => p.category === 'PLATS_IVOIRIENS' && db.menuJour.includes(p.id) && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
-                    .map((plat) => {
+                    .map((plat, idx) => {
                       const isMenuJour = db.menuJour.includes(plat.id);
                       return (
                         <div
-                          key={plat.id}
+                          key={`cat-plat-${plat.id}-${idx}`}
                           onClick={() => isMenuJour && addToCart(plat.id)}
                           className={`p-4 bg-white rounded-2xl border transition-all duration-200 select-none ${
                             isMenuJour
@@ -769,12 +779,12 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {db.plats
                     .filter((p) => p.category === 'BOISSONS' && db.menuJour.includes(p.id) && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
-                    .map((plat) => {
+                    .map((plat, idx) => {
                       const isMenuJour = db.menuJour.includes(plat.id);
                       const isOutOfStock = plat.isStocked && (plat.stock ?? 0) <= 0;
                       return (
                         <div
-                          key={plat.id}
+                          key={`cat-boisson-${plat.id}-${idx}`}
                           onClick={() => isMenuJour && !isOutOfStock && addToCart(plat.id)}
                           className={`p-4 bg-white rounded-2xl border transition-all duration-200 select-none ${
                             isMenuJour && !isOutOfStock
@@ -834,12 +844,12 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {db.plats
                     .filter((p) => p.category === 'EMBALLAGES' && db.menuJour.includes(p.id) && p.name.toLowerCase().includes(searchPlatQuery.toLowerCase()))
-                    .map((plat) => {
+                    .map((plat, idx) => {
                       const isMenuJour = db.menuJour.includes(plat.id);
                       const isOutOfStock = plat.isStocked && (plat.stock ?? 0) <= 0;
                       return (
                         <div
-                          key={plat.id}
+                          key={`cat-emballage-${plat.id}-${idx}`}
                           onClick={() => isMenuJour && !isOutOfStock && addToCart(plat.id)}
                           className={`p-4 bg-white rounded-2xl border transition-all duration-200 select-none ${
                             isMenuJour && !isOutOfStock
@@ -918,8 +928,8 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
               </div>
             ) : (
               <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
-                {cartItems.map((item) => (
-                  <div key={item.plat.id} className="flex justify-between items-center text-xs p-2 bg-slate-50/80 rounded-xl">
+                {cartItems.map((item, idx) => (
+                  <div key={`cart-item-${item.plat.id}-${idx}`} className="flex justify-between items-center text-xs p-2 bg-slate-50/80 rounded-xl">
                     <div className="space-y-0.5 max-w-[200px]">
                       <span className="font-bold text-gray-800 block line-clamp-1">{item.plat.name}</span>
                       <span className="text-[10px] text-gray-450 font-mono font-semibold">{formatFCFA(item.plat.price)} portion</span>
@@ -980,8 +990,8 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                     onChange={(e) => setSelectedClientId(e.target.value)}
                     className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-800 focus:outline-none"
                   >
-                    {db.clients.map((cl) => (
-                      <option key={cl.id} value={cl.id}>
+                    {db.clients.map((cl, idx) => (
+                      <option key={`client-opt-${cl.id}-${idx}`} value={cl.id}>
                         {cl.name} (Tél: {cl.phone})
                       </option>
                     ))}
@@ -1019,9 +1029,9 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 🪑 Table Assignée (1 à 20)
               </span>
               <div className="grid grid-cols-5 gap-1">
-                {Array.from({ length: 20 }, (_, i) => i + 1).map((tbl) => (
+                {Array.from({ length: 20 }, (_, i) => i + 1).map((tbl, idx) => (
                   <button
-                    key={tbl}
+                    key={`caisse-table-${tbl}-${idx}`}
                     type="button"
                     onClick={() => setSelectedTableNumber(tbl)}
                     className={`py-1 rounded text-[10px] font-black font-mono transition-all ${
@@ -1078,9 +1088,9 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
 
             {/* Filter buttons */}
             <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl self-start">
-              {(['ALL', 'EN_COURS', 'ATTENTE_PAIEMENT', 'SERVIE', 'PRET_A_LIVRER', 'EN_LIVRAISON', 'LIVREE', 'PAYEE'] as const).map((st) => (
+              {(['ALL', 'EN_COURS', 'ATTENTE_PAIEMENT', 'SERVIE', 'PRET_A_LIVRER', 'EN_LIVRAISON', 'LIVREE', 'PAYEE'] as const).map((st, idx) => (
                 <button
-                  key={st}
+                  key={`history-filter-${st}-${idx}`}
                   onClick={() => setHistoryFilter(st)}
                   className={`px-2.5 py-1.5 text-[10px] font-bold rounded-lg transition ${
                     historyFilter === st
@@ -1177,7 +1187,14 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                           </div>
                         ) : (
                           <select
-                            value={cmd.status}
+                            value={
+                              ['EN_ATTENTE_PAIEMENT', 'ATTENTE_PAIEMENT', 'EN_COURS'].includes(cmd.status) ? 'EN_ATTENTE_PAIEMENT' :
+                              cmd.status === 'PAYEE_NON_SERVIE' ? 'PAYEE_NON_SERVIE' :
+                              ['SERVIE', 'PRET_A_LIVRER'].includes(cmd.status) ? 'SERVIE' :
+                              ['REMISE_LIVREUR', 'EN_LIVRAISON'].includes(cmd.status) ? 'REMISE_LIVREUR' :
+                              ['PAYEE_LIVREE_CLOTUREE', 'LIVREE', 'PAYEE'].includes(cmd.status) ? 'PAYEE_LIVREE_CLOTUREE' :
+                              cmd.status === 'ANNULEE' ? 'ANNULEE' : cmd.status
+                            }
                             onChange={(e) => {
                               const res = db.updateCommandeStatus(cmd.id, e.target.value as any, false, undefined, activeEmployee?.id);
                               if (!res.success) {
@@ -1185,30 +1202,20 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                               }
                             }}
                             className={`text-[10px] font-bold border rounded-lg py-1 px-1.5 focus:outline-none focus:ring-1 focus:ring-orange-500 font-mono transition outline-none cursor-pointer ${
-                              cmd.status === 'PAYEE' ? 'bg-green-50 border-green-200 text-green-700 font-bold' :
-                              cmd.status === 'LIVREE' ? 'bg-emerald-50 border-emerald-255 text-emerald-700' :
-                              cmd.status === 'EN_LIVRAISON' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' :
-                              cmd.status === 'PRET_A_LIVRER' ? 'bg-blue-50 border-blue-200 text-blue-750' :
-                              cmd.status === 'SERVIE' ? 'bg-orange-50 border-orange-200 text-orange-700 font-bold' :
-                              cmd.status === 'ATTENTE_PAIEMENT' ? 'bg-rose-50 border-rose-220 text-rose-700' :
-                              (cmd.type === 'SUR_PLACE' && cmd.status === 'EN_COURS' && paid === 0) ? 'bg-red-50 border-red-200 text-red-700 font-bold' :
-                              'bg-yellow-50 border-yellow-250 text-yellow-750'
+                              ['PAYEE_LIVREE_CLOTUREE', 'PAYEE', 'LIVREE'].includes(cmd.status) ? 'bg-green-50 border-green-200 text-green-700 font-bold' :
+                              ['REMISE_LIVREUR', 'EN_LIVRAISON'].includes(cmd.status) ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-bold' :
+                              ['SERVIE', 'PRET_A_LIVRER'].includes(cmd.status) ? 'bg-blue-50 border-blue-200 text-blue-700 font-bold' :
+                              cmd.status === 'PAYEE_NON_SERVIE' ? 'bg-amber-50 border-amber-200 text-amber-700 font-bold' :
+                              cmd.status === 'ANNULEE' ? 'bg-red-50 border-red-200 text-red-700 font-bold' :
+                              'bg-rose-50 border-rose-200 text-rose-700 font-bold'
                             }`}
                           >
-                            {cmd.type === 'SUR_PLACE' ? (
-                              <>
-                                <option value="EN_COURS">{paid === 0 ? '🍽️ À servir (Non payé)' : '💵 Payé non servi'}</option>
-                                <option value="SERVIE">🍽️ Servie (Table)</option>
-                                <option value="PAYEE">✓ Payée / Clôturée</option>
-                              </>
-                            ) : (
-                              <>
-                                <option value="ATTENTE_PAIEMENT">⏳ En attente de paiement</option>
-                                <option value="EN_COURS">💵 Payé</option>
-                                <option value="PRET_A_LIVRER">📦 Servi en attente de livraison</option>
-                                <option value="LIVREE">✓ Livré et clôturée</option>
-                              </>
-                            )}
+                            <option value="EN_ATTENTE_PAIEMENT">⏳ En attente de paiement</option>
+                            <option value="PAYEE_NON_SERVIE">🍳 Payée non servie</option>
+                            <option value="SERVIE">🍽️ Servie</option>
+                            <option value="REMISE_LIVREUR">🛵 Remise au livreur</option>
+                            <option value="PAYEE_LIVREE_CLOTUREE">✓ Payée livrée et clôturée</option>
+                            <option value="ANNULEE">❌ Annulée</option>
                           </select>
                         )}
                       </td>
@@ -1431,8 +1438,8 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                   name="category"
                   className="w-full bg-slate-50 hover:bg-slate-100 text-slate-800 border border-gray-250 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-orange-500 font-medium"
                 >
-                  {Array.from(new Set(db.depenseCategories || ['Loyer', 'Factures', 'Provisions', 'Transport', 'Livraison', 'Taxes', 'Salaires', 'Réparations', 'Autre'])).map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
+                  {Array.from(new Set(db.depenseCategories || ['Loyer', 'Factures', 'Provisions', 'Transport', 'Livraison', 'Taxes', 'Salaires', 'Réparations', 'Autre'])).map((cat, idx) => (
+                    <option key={`dep-cat-${cat}-${idx}`} value={cat}>{cat}</option>
                   ))}
                 </select>
               </div>
@@ -1858,7 +1865,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                       Aucun plat sélectionné. Utilisez la liste à droite pour en ajouter.
                     </div>
                   ) : (
-                    (Object.entries(editOrderCart) as [string, number][]).map(([pid, qty]) => {
+                    (Object.entries(editOrderCart) as [string, number][]).map(([pid, qty], idx) => {
                       const plat = db.plats.find((p) => p.id === pid);
                       if (!plat) return null;
                       const originalItem = selectedOrderForEdit.items.find((it) => it.platId === pid);
@@ -1866,7 +1873,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                       const diff = qty - originalQty;
 
                       return (
-                        <div key={pid} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-gray-150 shadow-sm">
+                        <div key={`edit-cart-${pid}-${idx}`} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-gray-150 shadow-sm">
                           <div className="flex-1">
                             <span className="text-xs font-bold text-gray-800 block">{plat.name}</span>
                             <span className="text-[10px] font-bold text-gray-450 font-mono">
@@ -1969,7 +1976,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[200px] max-h-[350px]">
                   {db.plats
                     .filter((p) => p.name.toLowerCase().includes(editSearchQuery.toLowerCase()))
-                    .map((plat) => {
+                    .map((plat, idx) => {
                       const isOutOfStock = plat.isStocked && (plat.stock === undefined || plat.stock <= 0);
                       const originalItem = selectedOrderForEdit.items.find((it) => it.platId === plat.id);
                       const originalQty = originalItem ? originalItem.quantity : 0;
@@ -1978,7 +1985,7 @@ export default function EmployeeInterface({ db, activeEmployee: passedEmployee, 
 
                       return (
                         <div 
-                          key={plat.id}
+                          key={`edit-plat-${plat.id}-${idx}`}
                           className={`p-2.5 rounded-xl border transition flex items-center justify-between text-left ${
                             isOutOfStock && hasCurrentEditQty === 0
                               ? 'bg-gray-50 border-gray-100 opacity-60'

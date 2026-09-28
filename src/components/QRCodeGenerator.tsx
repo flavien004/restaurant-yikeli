@@ -153,7 +153,7 @@ export default function QRCodeGenerator({ restaurantLogo, restaurantName }: QRCo
                   >
                     <option value="">🍽️ COMMANDER À UNE TABLE...</option>
                     {[...Array(20)].map((_, i) => (
-                      <option key={i + 1} value={i + 1}>
+                      <option key={`qr-table-option-${i + 1}`} value={i + 1}>
                         Table N° {i + 1} ({i + 1 === 1 ? 'Chef-lieu' : `Salle ${i+1}`})
                       </option>
                     ))}
@@ -174,9 +174,9 @@ export default function QRCodeGenerator({ restaurantLogo, restaurantName }: QRCo
                   { label: 'Vert Chlorophylle', hex: '#16a34a' },
                   { label: 'Bordeaux Chic', hex: '#9f1239' },
                   { label: 'Bleu Royal', hex: '#1d4ed8' },
-                ].map((color) => (
+                ].map((color, idx) => (
                   <button
-                    key={color.hex}
+                    key={`qr-color-${color.hex}-${idx}`}
                     type="button"
                     onClick={() => setQrColor(color.hex)}
                     className={`h-8 px-3 rounded-xl border text-[10px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
@@ -285,7 +285,7 @@ export default function QRCodeGenerator({ restaurantLogo, restaurantName }: QRCo
               const tableNum = i + 1;
               const url = getClientUrl(tableNum);
               return (
-                <TableQRCard key={tableNum} tableNumber={tableNum} targetUrl={url} qrColor={qrColor} restaurantLogo={restaurantLogo} restaurantName={displayName} />
+                <TableQRCard key={`qr-table-card-${tableNum}-${i}`} tableNumber={tableNum} targetUrl={url} qrColor={qrColor} restaurantLogo={restaurantLogo} restaurantName={displayName} />
               );
             })}
           </div>

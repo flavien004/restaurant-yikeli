@@ -81,8 +81,9 @@ interface AdminInterfaceProps {
 }
 
 export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupabaseModal }: AdminInterfaceProps) {
-  // Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'stock' | 'finances' | 'analyse' | 'employes' | 'annulations' | 'fournisseurs' | 'qrcodes' | 'settings'>('dashboard');
+  // Tabs & Sidebar state
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'stock' | 'finances' | 'employes' | 'annulations' | 'fournisseurs' | 'qrcodes' | 'settings'>('dashboard');
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showSubscriptionRenewalModal, setShowSubscriptionRenewalModal] = useState(false);
   const [renewalModalMode, setRenewalModalMode] = useState<'renew' | 'change'>('renew');
@@ -299,20 +300,25 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
       end = new Date(endDateStr + 'T23:59:59');
     }
 
-    // Filter Commandes
+    const activeRestId = db.activeRestaurant?.id;
+
+    // Filter Commandes (du restaurant connecté uniquement)
     const filteredCmds = db.commandes.filter((c) => {
+      if (c.restaurantId && activeRestId && c.restaurantId !== activeRestId) return false;
       const d = new Date(c.createdAt);
       return d >= start && d <= end;
     });
 
     // Filter Paiements associated with commands in the period, or simply payments executed in this period
     const filteredPays = db.paiements.filter((p) => {
+      if (p.restaurantId && activeRestId && p.restaurantId !== activeRestId) return false;
       const d = new Date(p.createdAt);
       return d >= start && d <= end;
     });
 
-    // Filter Expenses (exclure les dépenses caisse non validées des calculs financiers)
+    // Filter Expenses (du restaurant connecté uniquement)
     const filteredDeps = db.depenses.filter((dep) => {
+      if (dep.restaurantId && activeRestId && dep.restaurantId !== activeRestId) return false;
       if (dep.status && dep.status !== 'PAYEE') return false;
       const d = new Date(dep.date + 'T12:00:00'); // set mid day to avoid timezone slip
       return d >= start && d <= end;
@@ -717,9 +723,6 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
 
       const profit = sales - expenses;
 
-      // Seuil de rentabilité pour profit 150K
-      // To get 150K profit, needed sales is:
-      // Fixed Expenses + Exploitation Expenses + 150000
       const fixed = db.depenses
         .filter((d) => d.date && d.date.startsWith(m.key) && getExpenseTypeForCategory(d.category) === 'Charge fixe')
         .reduce((sum, d) => sum + d.amount, 0);
@@ -728,9 +731,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
         .filter((d) => d.date && d.date.startsWith(m.key) && getExpenseTypeForCategory(d.category) === 'Charge d\'exploitation')
         .reduce((sum, d) => sum + d.amount, 0);
 
-      const resolvedFixed = fixed > 0 ? fixed : 197500;
-      const resolvedExplo = explo > 0 ? explo : 50000;
-      const target = resolvedFixed + resolvedExplo + 150000;
+      const target = (fixed + explo) > 0 ? (fixed + explo + 150000) : 0;
 
       return {
         month: m.month,
@@ -743,31 +744,34 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
   }, [db.paiements, db.depenses]);
 
   // Advanced Chart Data preparation:
-  // GRAPHIQUE 1 & 6 — Trailing 12 Months
+  // GRAPHIQUE 1 & 6 — Trailing 12 Months (Données 100% réelles de la base du restaurant connecté)
   const g1Data = useMemo(() => {
     const monthsFr = ["Janv", "Févr", "Mars", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
     const data = [];
-    const d = new Date(2026, 4, 28); // May 2026 is index 4
+    const d = new Date();
+    const activeRestId = db.activeRestaurant?.id;
     for (let i = 11; i >= 0; i--) {
       const target = new Date(d.getFullYear(), d.getMonth() - i, 1);
       const yearSuffix = String(target.getFullYear()).substring(2);
       const monthLabel = `${monthsFr[target.getMonth()]} ${yearSuffix}`;
       const monthKey = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`;
       
-      const monthPayments = db.paiements.filter(p => (p.createdAt || '').startsWith(monthKey));
+      const monthPayments = db.paiements.filter(p => {
+        if (!p.createdAt || !p.createdAt.startsWith(monthKey)) return false;
+        if (p.restaurantId && activeRestId && p.restaurantId !== activeRestId) return false;
+        return true;
+      });
       const realCA = monthPayments.reduce((sum, p) => sum + p.amount, 0);
       
-      const monthExpenses = db.depenses.filter(dep => (dep.date || '').startsWith(monthKey));
+      const monthExpenses = db.depenses.filter(dep => {
+        if (!dep.date || !dep.date.startsWith(monthKey)) return false;
+        if (dep.restaurantId && activeRestId && dep.restaurantId !== activeRestId) return false;
+        return true;
+      });
       const realExp = monthExpenses.reduce((sum, dep) => sum + dep.amount, 0);
       
-      // industry-realistic baseline backfill if there are no database entries
-      const monthIndex = target.getMonth();
-      const cycleFactor = 1 + 0.15 * Math.sin(monthIndex * 0.5) + (monthIndex === 11 ? 0.22 : 0) - (monthIndex === 0 ? 0.08 : 0);
-      const baseRevenue = 1450000 * cycleFactor;
-      const baseExpense = baseRevenue * 0.58;
-      
-      const finalCA = realCA > 0 ? realCA : Math.round(baseRevenue);
-      const finalExp = realExp > 0 ? realExp : Math.round(baseExpense);
+      const finalCA = realCA;
+      const finalExp = realExp;
       const finalProfit = finalCA - finalExp;
       const netMargin = finalCA > 0 ? Math.round((finalProfit / finalCA) * 100) : 0;
       
@@ -781,9 +785,9 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
       });
     }
     return data;
-  }, [db.paiements, db.depenses]);
+  }, [db.paiements, db.depenses, db.activeRestaurant?.id]);
 
-  // GRAPHIQUE 3 — Chiffre d'Affaires par Jour de la Semaine (BarChart)
+  // GRAPHIQUE 3 — Chiffre d'Affaires par Jour de la Semaine (BarChart avec données réelles)
   const g3Data = useMemo(() => {
     const daysOfWeek = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
     const daysOrdered = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
@@ -802,23 +806,11 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
       }
     });
     
-    const hasPayments = Object.values(dailyTotals).some(v => v > 0);
-    const baseline: Record<string, number> = {
-      "Lundi": 160000,
-      "Mardi": 185000,
-      "Mercredi": 210000,
-      "Jeudi": 240000,
-      "Vendredi": 480000,
-      "Samedi": 550000,
-      "Dimanche": 420000
-    };
-    
     const daysData = daysOrdered.map(day => {
-      const realVal = dailyTotals[day];
-      const finalVal = hasPayments ? realVal : baseline[day];
+      const realVal = dailyTotals[day] || 0;
       return {
         name: day,
-        ca: finalVal,
+        ca: realVal,
         isMax: false,
       };
     });
@@ -833,62 +825,65 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
     return daysData;
   }, [filteredData.paiements]);
 
-  // GRAPHIQUE 5 — Ratio provision/vente de plats par semaine (BarChart groupé)
+  // GRAPHIQUE 5 — Ratio provision/vente de plats par semaine (Calcul 100% réel sur 5 semaines)
   const g5Data = useMemo(() => {
     const data = [];
-    const baseVentes = [650000, 720000, 580000, 690000, 0];
-    const baseProvs = [195000, 260000, 185000, 214000, 0];
-    
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    
-    const currentWeekCmds = db.commandes.filter(c => {
-      const d = new Date(c.createdAt || '');
-      return d >= oneWeekAgo && c.status !== 'ANNULEE';
-    });
-    
-    let currentKitchenSales = currentWeekCmds.reduce((sum, c) => {
-      const itemKitchenSum = c.items.reduce((iSum, item) => {
-        const p = db.plats.find(plat => plat.id === item.platId);
-        if (p && p.category === 'PLATS_IVOIRIENS') {
-          return iSum + (item.quantity * item.unitPrice);
-        }
-        return iSum;
-      }, 0);
-      return sum + itemKitchenSum;
-    }, 0);
-    
-    const currentWeekDeps = db.depenses.filter(d => {
-      const depDate = new Date(d.date + 'T12:00:00');
-      return depDate >= oneWeekAgo && d.category === 'Provisions';
-    });
-    let currentProvsExpenses = currentWeekDeps.reduce((sum, d) => sum + d.amount, 0);
-    
-    if (currentKitchenSales === 0) currentKitchenSales = 680000;
-    if (currentProvsExpenses === 0) currentProvsExpenses = 217600; // ~32%
-    
-    baseVentes[4] = currentKitchenSales;
-    baseProvs[4] = currentProvsExpenses;
-    
+    const activeRestId = db.activeRestaurant?.id;
     const weeklyLabels = ["S-4", "S-3", "S-2", "S-1", "Semaine Active"];
-    for (let i = 0; i < 5; i++) {
-      const ratio = baseVentes[i] > 0 ? (baseProvs[i] / baseVentes[i]) * 100 : 0;
+    const now = new Date();
+
+    for (let i = 4; i >= 0; i--) {
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - (i * 7 + 7));
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const endOfWeek = new Date(now);
+      endOfWeek.setDate(now.getDate() - (i * 7));
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      const weekCmds = db.commandes.filter(c => {
+        if (c.status === 'ANNULEE') return false;
+        if (c.restaurantId && activeRestId && c.restaurantId !== activeRestId) return false;
+        const d = new Date(c.createdAt || '');
+        return d >= startOfWeek && d <= endOfWeek;
+      });
+
+      const kitchenSales = weekCmds.reduce((sum, c) => {
+        const itemKitchenSum = c.items.reduce((iSum, item) => {
+          return iSum + (item.quantity * item.unitPrice);
+        }, 0);
+        return sum + itemKitchenSum;
+      }, 0);
+
+      const weekDeps = db.depenses.filter(d => {
+        if (d.category !== 'Provisions') return false;
+        if (d.restaurantId && activeRestId && d.restaurantId !== activeRestId) return false;
+        const depDate = new Date(d.date + 'T12:00:00');
+        return depDate >= startOfWeek && depDate <= endOfWeek;
+      });
+
+      const provsExpenses = weekDeps.reduce((sum, d) => sum + d.amount, 0);
+      const ratio = kitchenSales > 0 ? (provsExpenses / kitchenSales) * 100 : 0;
+
       data.push({
-        week: weeklyLabels[i],
-        ventes: baseVentes[i],
-        provisions: baseProvs[i],
+        week: weeklyLabels[4 - i],
+        ventes: kitchenSales,
+        provisions: provsExpenses,
         ratio: Math.round(ratio * 10) / 10,
       });
     }
-    return data;
-  }, [db.commandes, db.depenses, db.plats]);
 
-  // GRAPHIQUE 8 — Évolution du Ticket Moyen et du Nombre de plat (LineChart combiné)
+    return data;
+  }, [db.commandes, db.depenses, db.activeRestaurant?.id]);
+
+  // GRAPHIQUE 8 — Évolution du Ticket Moyen et du Nombre de plat (Données réelles sans données fictives)
   const g8Data = useMemo(() => {
     const dataset = [];
     const countsByMonth: Record<string, { cmdCount: number; platCount: number }> = {};
+    const activeRestId = db.activeRestaurant?.id;
     
     db.commandes.forEach(c => {
+      if (c.restaurantId && activeRestId && c.restaurantId !== activeRestId) return;
       if (c.createdAt && c.status !== 'ANNULEE') {
         const mKey = c.createdAt.substring(0, 7);
         if (!countsByMonth[mKey]) countsByMonth[mKey] = { cmdCount: 0, platCount: 0 };
@@ -898,7 +893,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
       }
     });
 
-    g1Data.forEach((mItem, index) => {
+    g1Data.forEach((mItem) => {
       const mKey = mItem.monthKey;
       const realStat = countsByMonth[mKey];
       
@@ -909,9 +904,8 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
         ticketMoyen = Math.round(mItem.ca / realStat.cmdCount);
         couverts = realStat.platCount;
       } else {
-        const ratioFactor = 1 + (index % 3) * 0.04;
-        ticketMoyen = Math.round(2300 * ratioFactor);
-        couverts = Math.round((mItem.ca / ticketMoyen) * 1.25);
+        ticketMoyen = 0;
+        couverts = 0;
       }
       
       dataset.push({
@@ -922,7 +916,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
     });
     
     return dataset;
-  }, [db.commandes, g1Data]);
+  }, [db.commandes, g1Data, db.activeRestaurant?.id]);
 
   // GRAPHIQUE 9 — Top 5 Plats les Plus Rentables (BarChart horizontal)
   const g9Data = useMemo(() => {
@@ -1340,8 +1334,181 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
     return new Intl.NumberFormat('fr-FR').format(amount) + ' FCFA';
   };
 
+  const navItems = [
+    {
+      id: 'dashboard',
+      label: 'Tableau de Bord',
+      icon: <TrendingUp className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'menu',
+      label: 'Menu & Catalogue',
+      icon: <Coffee className="w-4 h-4 shrink-0" />,
+      badge: <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-orange-400 font-bold">{db.plats.length}</span>,
+    },
+    {
+      id: 'stock',
+      label: 'Stocks & Provisions',
+      icon: <Package className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'finances',
+      label: 'Suivi des Finances',
+      icon: <DollarSign className="w-4 h-4 shrink-0" />,
+    },
+    {
+      id: 'employes',
+      label: 'Gestion Employés',
+      icon: <Users className="w-4 h-4 shrink-0" />,
+      badge: <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold">{db.users.length}</span>,
+    },
+    {
+      id: 'fournisseurs',
+      label: 'Fournisseurs',
+      icon: <Truck className="w-4 h-4 shrink-0" />,
+      badge: <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold">{(db.suppliers || []).length}</span>,
+    },
+    {
+      id: 'annulations',
+      label: 'Annulations & Remb.',
+      icon: <XCircle className="w-4 h-4 shrink-0 text-red-400" />,
+      badge: db.commandes.filter(c => c.status === 'DEMANDE_ANNULATION').length > 0 ? (
+        <span className="px-1.5 py-0.5 text-[10px] bg-red-600 text-white rounded-full font-black animate-pulse shadow-sm">
+          {db.commandes.filter(c => c.status === 'DEMANDE_ANNULATION').length}
+        </span>
+      ) : null,
+    },
+    {
+      id: 'qrcodes',
+      label: 'Générateur QR Codes',
+      icon: <Smartphone className="w-4 h-4 shrink-0 text-orange-400" />,
+    },
+    {
+      id: 'settings',
+      label: 'Paramètres & Config',
+      icon: <Settings className="w-4 h-4 shrink-0" />,
+    },
+  ];
+
   return (
-    <div className="space-y-6" id="admin-module">
+    <div className="flex flex-col md:flex-row min-h-screen bg-slate-100/70 -m-4 sm:-m-6 print:m-0" id="admin-module">
+      
+      {/* Mobile Top Toggle Header */}
+      <div className="md:hidden bg-slate-900 text-white p-3.5 flex items-center justify-between sticky top-0 z-40 border-b border-slate-800 print:hidden">
+        <div className="flex items-center gap-2.5">
+          <Logo size="sm" logoUrl={db.activeRestaurant?.logo} restaurantName={db.activeRestaurant?.name} width={32} height={32} className="bg-white p-0.5 rounded-lg shrink-0" />
+          <div className="leading-tight">
+            <span className="font-extrabold text-sm text-white truncate max-w-[170px] block">{db.activeRestaurant?.name || 'Restaurant'}</span>
+            <span className="text-[10px] text-orange-400 font-bold uppercase">Administration</span>
+          </div>
+        </div>
+        <button
+          onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+          className="p-2 rounded-xl bg-slate-800 text-slate-200 hover:text-white flex items-center gap-1.5 text-xs font-bold border border-slate-700 active:scale-95 cursor-pointer"
+        >
+          {isMobileSidebarOpen ? <X className="w-4 h-4" /> : <Layers className="w-4 h-4 text-orange-400" />}
+          <span>Menu</span>
+        </button>
+      </div>
+
+      {/* Barre Latérale (Sidebar Menu) */}
+      <aside className={`w-full md:w-64 bg-slate-900 text-white flex flex-col shrink-0 md:min-h-screen border-r border-slate-800 z-30 print:hidden ${
+        isMobileSidebarOpen ? 'block' : 'hidden md:flex'
+      }`}>
+        {/* Identité Restaurant dans la barre latérale */}
+        <div className="p-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950/40">
+          <Logo
+            size="sm"
+            logoUrl={db.activeRestaurant?.logo}
+            restaurantName={db.activeRestaurant?.name}
+            width={40}
+            height={40}
+            className="bg-white p-1 rounded-xl shadow-md shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <h3 className="font-extrabold text-sm text-white truncate tracking-tight">{db.activeRestaurant?.name || 'Restaurant'}</h3>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 font-bold px-1.5 py-0.5 rounded border border-emerald-500/30 uppercase">
+                {db.activeRestaurant?.status || 'ACTIF'}
+              </span>
+              <span className="text-[10px] text-slate-400 truncate">{activeAdmin?.name || 'Gérant'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section Titre */}
+        <div className="p-3 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 px-4 pt-4 pb-1">
+          Menu de Gestion
+        </div>
+
+        {/* Liens de navigation barre latérale */}
+        <nav className="flex-1 overflow-y-auto px-3 py-1 space-y-1">
+          {navItems.map((item, idx) => (
+            <button
+              key={`admin-nav-${item.id}-${idx}`}
+              onClick={() => {
+                setActiveTab(item.id as any);
+                setIsMobileSidebarOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-left cursor-pointer ${
+                activeTab === item.id
+                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md shadow-orange-500/25 font-extrabold'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </div>
+              {item.badge}
+            </button>
+          ))}
+        </nav>
+
+        {/* Bas de Barre Latérale : Supabase Netlify & Actions rapides */}
+        <div className="p-3 border-t border-slate-800 bg-slate-950/50 space-y-2">
+          <div className="px-3 py-2 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-between text-[11px]">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${db.supabaseStatus === 'CONNECTED' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="text-slate-300 font-medium">Supabase Netlify</span>
+            </div>
+            <span className="text-[9px] font-mono text-emerald-400 font-bold">
+              {db.supabaseStatus === 'CONNECTED' ? 'En ligne' : 'Local'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => {
+                setChangePasswordModalOpen(true);
+                setCurrentPasswordInput('');
+                setNewPasswordInput('');
+                setConfirmPasswordInput('');
+                setPasswordChangeError('');
+                setPasswordChangeSuccess(false);
+              }}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white text-[11px] font-semibold transition"
+              title="Changer mon mot de passe"
+            >
+              <Key className="w-3.5 h-3.5 text-orange-400" />
+              <span>Mot de passe</span>
+            </button>
+
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="p-2 rounded-xl bg-red-900/40 hover:bg-red-800/60 text-red-300 hover:text-red-100 transition"
+                title="Se déconnecter"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 min-w-0 p-4 md:p-6 space-y-6 overflow-y-auto">
       {/* Dynamic Iframe Notice Banner */}
       {typeof window !== 'undefined' && window.self !== window.top && (
         <div className="bg-gradient-to-r from-amber-600 to-orange-500 text-white rounded-2xl p-4 shadow-md text-xs font-semibold flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-orange-400/20 print:hidden animate-none">
@@ -1514,144 +1681,6 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
           </div>
         </motion.div>
       )}
-
-      {/* Navigation Sub-Tabs */}
-      <div className="flex border-b border-gray-200 overflow-x-auto gap-2">
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'dashboard'
-              ? 'border-orange-500 text-orange-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-dashboard"
-        >
-          <TrendingUp className="w-4 h-4" />
-          Tableau de Bord
-        </button>
-
-        <button
-          onClick={() => setActiveTab('menu')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'menu'
-              ? 'border-orange-500 text-orange-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-menu"
-        >
-          <Coffee className="w-4 h-4" />
-          Menu & Catalogue ({db.plats.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('stock')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'stock'
-              ? 'border-orange-500 text-orange-600 font-bold'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-stock"
-        >
-          <Package className="w-4 h-4" />
-          Approvisionnements & Stocks
-        </button>
-
-        <button
-          onClick={() => setActiveTab('finances')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'finances'
-              ? 'border-orange-500 text-orange-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-finances"
-        >
-          <DollarSign className="w-4 h-4" />
-          Suivi des Finances
-        </button>
-
-        <button
-          onClick={() => setActiveTab('analyse')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-bold text-sm transition-all whitespace-nowrap ${
-            activeTab === 'analyse'
-              ? 'border-orange-500 text-orange-600 font-extrabold'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-analyse"
-        >
-          <LineChartIcon className="w-4 h-4 text-orange-500" />
-          <span>Analyse & Prévisionnel 📈</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('employes')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'employes'
-              ? 'border-orange-500 text-orange-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-employes"
-        >
-          <Users className="w-4 h-4" />
-          Gestion Employés
-        </button>
-
-        <button
-          onClick={() => setActiveTab('fournisseurs')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'fournisseurs'
-              ? 'border-orange-500 text-orange-600 font-bold'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-fournisseurs"
-        >
-          <Truck className="w-4 h-4" />
-          <span>Fournisseurs ({(db.suppliers || []).length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('annulations')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap relative ${
-            activeTab === 'annulations'
-              ? 'border-orange-500 text-orange-600 font-bold'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-annulations"
-        >
-          <XCircle className="w-4 h-4 text-red-500" />
-          <span>Annulations & Remboursements</span>
-          {db.commandes.filter(c => c.status === 'DEMANDE_ANNULATION').length > 0 && (
-            <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-red-600 text-white rounded-full font-black animate-pulse shadow-sm flex items-center justify-center min-w-[18px] h-[18px]">
-              {db.commandes.filter(c => c.status === 'DEMANDE_ANNULATION').length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('qrcodes')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'qrcodes'
-              ? 'border-orange-500 text-orange-600 font-bold'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-qrcodes"
-        >
-          <Smartphone className="w-4 h-4 text-orange-500" />
-          <span>Générateur QR Codes 📱</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`flex items-center gap-2 px-5 py-3 border-b-2 font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === 'settings'
-              ? 'border-orange-500 text-orange-600 font-bold'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200'
-          }`}
-          id="tab-settings"
-        >
-          <Settings className="w-4 h-4 text-slate-700" />
-          <span>Paramètres &amp; Configuration ⚙️</span>
-        </button>
-      </div>
 
       {/* TAB CONTENT: DASHBOARD */}
       {activeTab === 'dashboard' && (
@@ -4928,317 +4957,6 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
         </motion.div>
       )}
 
-      {activeTab === 'analyse' && (
-        <motion.div
-          key="analyse-tab"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-6"
-        >
-          {/* HEADER BUSINESS INTELLIGENCE */}
-          <div className="bg-gradient-to-r from-orange-650 to-amber-600 p-6 rounded-2xl shadow-md text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="space-y-1 text-left">
-              <span className="text-[10px] bg-orange-550 border border-orange-450/30 text-orange-100 py-1 px-2.5 rounded-full font-black uppercase tracking-wider inline-block">
-                ✨ ANALYSTE FINANCIER INTELLIGENT YIKÉLI
-              </span>
-              <h3 className="text-xl font-black tracking-tight mt-1.5">Tableau de Bord Prévisionnel & Conseils Économiques</h3>
-              <p className="text-xs text-orange-105/90">
-                Outils d'analyse financière, d'estimation du Point Mort (seuil de rentabilité) et recommandations opérationnelles de vente pour garantir un bénéfice net mensuel.
-              </p>
-            </div>
-            
-          </div>
-
-          {/* DYNAMIC DERIVATION ZONE */}
-          {(() => {
-            // Group and compute metrics
-            // Categorize expenses:
-            const listFixed = db.depenses.filter(d => getExpenseTypeForCategory(d.category) === 'Charge fixe');
-            const listExpl = db.depenses.filter(d => getExpenseTypeForCategory(d.category) === 'Charge d\'exploitation');
-            const listVar = db.depenses.filter(d => getExpenseTypeForCategory(d.category) === 'Charge variable');
-
-            // Find number of active months
-            const uniqueMonths = Array.from(new Set(db.depenses.map(d => d.date.substring(0, 7))));
-            const numMonths = Math.max(1, uniqueMonths.length);
-
-            // Average monthly calculations across loaded database
-            const totalFixedSumAll = listFixed.reduce((s, d) => s + d.amount, 0);
-            const totalExplSumAll = listExpl.reduce((s, d) => s + d.amount, 0);
-
-            // Monthly averages based on real active data
-            const avgFixedMonthly = totalFixedSumAll > 0 ? totalFixedSumAll / numMonths : 0;
-            const avgExploitationMonthly = totalExplSumAll > 0 ? totalExplSumAll / numMonths : 0;
-
-            // Target monthly Net Profit
-            const targetMonthlyProfit = 150000; // FCFA
-
-            // Required Monthly Sales = Fixed + Exploitation + Target Profit
-            const neededMonthlyRevenue = avgFixedMonthly + avgExploitationMonthly + targetMonthlyProfit;
-            
-            // Required Weekly Sales
-            const neededWeeklySales = neededMonthlyRevenue / 4;
-
-            // Actual May Sales to compare weekly run-rate
-            const mayPaymentsCount = db.paiements.filter(p => p.createdAt.startsWith('2026-05'));
-            const actualMayRevenue = mayPaymentsCount.reduce((sum, p) => sum + p.amount, 0);
-            const actualWeeklyRevenue = actualMayRevenue / 4; // average May week
-
-            // Percentage achieved
-            const achievePercent = neededWeeklySales > 0 ? (actualWeeklyRevenue / neededWeeklySales) * 100 : 0;
-            const weekGap = actualWeeklyRevenue - neededWeeklySales;
-
-            return (
-              <div className="space-y-6">
-                
-                {/* METRICS CARDS ROW */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div className="bg-white p-4.5 rounded-2xl border border-gray-150 flex flex-col justify-between hover:shadow-md transition">
-                    <div className="space-y-1 text-left">
-                      <span className="text-[10px] font-extrabold text-blue-900 bg-blue-50 py-0.5 px-2 rounded-full uppercase tracking-wider">
-                        📌 Coûts Fixes / Mois
-                      </span>
-                      <h4 className="text-[11px] text-gray-500 font-medium select-none text-left">Loyer, Factures, Salaires contractuels</h4>
-                    </div>
-                    <span className="text-xl font-black text-gray-900 font-sans mt-3 block">{formatFCFA(Math.round(avgFixedMonthly))}</span>
-                  </div>
-
-                  <div className="bg-white p-4.5 rounded-2xl border border-gray-150 flex flex-col justify-between hover:shadow-md transition">
-                    <div className="space-y-1 text-left">
-                      <span className="text-[10px] font-extrabold text-emerald-900 bg-emerald-50 py-0.5 px-2 rounded-full uppercase tracking-wider">
-                        📦 d'Exploitation Moy. / Mois
-                      </span>
-                      <h4 className="text-[11px] text-gray-500 font-medium select-none text-left">Provisions, Transport, Gaz, Charbon</h4>
-                    </div>
-                    <span className="text-xl font-black text-gray-900 font-sans mt-3 block">{formatFCFA(Math.round(avgExploitationMonthly))}</span>
-                  </div>
-
-                  <div className="bg-white p-4.5 rounded-2xl border border-gray-150 flex flex-col justify-between hover:shadow-md transition">
-                    <div className="space-y-1 text-left">
-                      <span className="text-[10px] font-extrabold text-orange-900 bg-orange-50 py-0.5 px-2 rounded-full uppercase tracking-wider">
-                        🎯 Bénéfice Visé / Mois
-                      </span>
-                      <h4 className="text-[11px] text-gray-500 font-medium select-none text-left">Bénéfice net mensuel souhaité</h4>
-                    </div>
-                    <span className="text-xl font-black text-orange-600 font-sans mt-3 block">{formatFCFA(targetMonthlyProfit)}</span>
-                  </div>
-
-                  <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 p-4.5 rounded-2xl border border-amber-200/80 flex flex-col justify-between hover:shadow-md transition">
-                    <div className="space-y-1 text-left">
-                      <span className="text-[10px] font-extrabold text-amber-950 bg-amber-100/70 py-0.5 px-2 rounded-full uppercase tracking-wider">
-                        💰 Objectif CA requis / Semaine
-                      </span>
-                      <h4 className="text-[11px] text-orange-950 font-bold select-none text-left">Ventes hebdomadaires cibles</h4>
-                    </div>
-                    <span className="text-2xl font-black text-orange-950 font-sans mt-3 block">{formatFCFA(Math.round(neededWeeklySales))}</span>
-                  </div>
-                </div>
-
-                {/* COMPARISON AND INTELLIGENT DIAGNOSTIC BLOCK */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  
-                  {/* DIAGNOSTIC COMPARAISON CARD */}
-                  <div className="lg:col-span-1 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4">
-                    <div className="border-b border-gray-100 pb-3 flex items-center justify-between">
-                      <h4 className="text-sm font-black text-gray-800 text-left uppercase tracking-tight">🔎 Diagnostic Hebdomadaire</h4>
-                      <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
-                        achievePercent >= 100 
-                          ? 'bg-emerald-100 text-emerald-800' 
-                          : achievePercent >= 80 
-                            ? 'bg-amber-100 text-amber-800' 
-                            : 'bg-rose-100 text-rose-800 animate-pulse'
-                      }`}>
-                        {achievePercent >= 100 ? '✅ OBJECTIF ATTEINT' : achievePercent >= 80 ? '⚠️ ATTENTION' : '🚨 SEUIL CRITIQUE'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="text-left py-1">
-                        <span className="text-xs text-gray-500 block">Objectif requis par Semaine</span>
-                        <span className="text-xl font-black font-mono text-gray-800">{formatFCFA(Math.round(neededWeeklySales))}</span>
-                      </div>
-
-                      <div className="text-left py-1 border-t border-gray-100 pt-2.5">
-                        <span className="text-xs text-gray-500 block">Ventes moyennes réelles (Mai 2026)</span>
-                        <span className="text-xl font-black font-mono text-orange-600">{formatFCFA(Math.round(actualWeeklyRevenue))}</span>
-                      </div>
-
-                      <div className="border-t border-gray-100 pt-3.5">
-                        <div className="flex justify-between text-xs font-bold text-gray-700 mb-1">
-                          <span>Progression vers l'objectif</span>
-                          <span>{achievePercent.toFixed(1)}%</span>
-                        </div>
-                        <div className="w-full bg-gray-100 h-3 rounded-full overflow-hidden border border-gray-200 shadow-inner">
-                          <div 
-                            className={`h-full transition-all duration-1000 ${
-                              achievePercent >= 100 
-                                ? 'bg-emerald-500' 
-                                : achievePercent >= 80 
-                                  ? 'bg-amber-500' 
-                                  : 'bg-rose-500'
-                            }`}
-                            style={{ width: `${Math.min(100, achievePercent)}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <div className={`p-4.5 rounded-xl border flex gap-3 text-left ${
-                        achievePercent >= 100 
-                          ? 'bg-emerald-50 border-emerald-150 text-emerald-950' 
-                          : 'bg-rose-50 border-rose-150 text-rose-950'
-                      }`}>
-                        <div className="text-lg">{achievePercent >= 100 ? '🏆' : '⚠️'}</div>
-                        <div className="space-y-1">
-                          <p className="text-xs font-bold">
-                            {achievePercent >= 100 
-                              ? `Excédent confortable de +${formatFCFA(Math.round(weekGap))} par semaine`
-                              : `Déficit financier de ${formatFCFA(Math.round(Math.abs(weekGap)))} par semaine`
-                            }
-                          </p>
-                          <p className="text-[11px] opacity-80 leading-relaxed font-sans select-none">
-                            {achievePercent >= 100 
-                              ? 'Vos ventes actuelles couvrent largement les charges fixes et d\'exploitation tout en générant plus de 150K FCFA de profit ! Gérer la fidélisation.'
-                              : 'Pour atteindre vos 150 000 FCFA nets, vous devez impérativement stimuler les ventes de plats ou compresser les charges variables.'
-                            }
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* PORTION RECOMMENDATIONS & CONSEILS */}
-                  <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4 text-left">
-                    <div className="border-b border-gray-100 pb-3 flex items-center justify-between">
-                      <h4 className="text-sm font-black text-gray-800 uppercase tracking-tight">💡 Conseils de l'Analyste & Estimations Opérationnelles</h4>
-                      <span className="text-[10px] text-gray-400 font-sans">Estimé le {TODAY_DATE.toLocaleDateString('fr-FR')}</span>
-                    </div>
-
-                    <p className="text-xs text-gray-500 leading-relaxed">
-                      Voici les volumes de portions journalières et hebdomadaires à écouler au restaurant <strong>{db.activeRestaurant?.name || 'Restaurant'}</strong> (en moyenne sur la base du panier moyen de <strong>2 500 FCFA</strong>) pour couvrir la totalité des charges fixes de <strong>{formatFCFA(avgFixedMonthly)}</strong> et les provisions d'exploitation de <strong>{formatFCFA(avgExploitationMonthly)}</strong> avec votre bénéfice net de 150K FCFA d'ici la fin du mois.
-                    </p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                      <div className="bg-slate-50 p-4 border border-slate-150 rounded-xl space-y-2.5">
-                        <span className="text-[10px] font-black tracking-wider text-slate-800 uppercase">📈 Objectif Global de Vente</span>
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-500">Portions par Jour (Moyenne) :</span>
-                            <span className="font-bold text-gray-900">
-                              {neededWeeklySales > 0 ? Math.ceil((neededWeeklySales / 6) / 2500) : 0} plats / jour
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-500">Portions par Semaine :</span>
-                            <span className="font-bold text-orange-600">
-                              {neededWeeklySales > 0 ? Math.ceil(neededWeeklySales / 2500) : 0} plats / sem
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-[10.5px] text-slate-400 leading-normal border-t border-slate-200/60 pt-2 font-sans select-none">
-                          Calculé sur un panier moyen standard (Attiéké + Thon, Poulet, Kédjénou) estimé à un prix unitaire de 2 500 FCFA.
-                        </p>
-                      </div>
-
-                      <div className="bg-amber-50/50 p-4 border border-amber-100 rounded-xl space-y-2.5">
-                        <span className="text-[10px] font-black tracking-wider text-amber-900 uppercase">🎯 Effort additionnel à fournir</span>
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-500">Déficit Hebdomadaire actuel :</span>
-                            <span className="font-black text-rose-650">
-                              {weekGap < 0 ? formatFCFA(Math.round(Math.abs(weekGap))) : '0 FCFA'}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-500">Ventes Supplémentaires requises :</span>
-                            <span className="font-bold text-gray-900">
-                              {weekGap < 0 ? Math.ceil(Math.abs(weekGap) / 2500) : 0} plats / semaine
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-[10.5px] text-amber-850/80 leading-normal border-t border-amber-200/50 pt-2 font-sans select-none">
-                          {weekGap < 0 
-                            ? `Il vous suffit de rajouter environ ${Math.ceil(Math.abs(weekGap) / 2500 / 6)} ventes par jour d'ouverture (6j/7) pour bousculer le Point Mort !`
-                            : 'Félicitations ! Vos ventes actuelles surclassent votre modèle économique cible. Conservez la qualité de service !'
-                          }
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* INTERACTIVE RECOMMENDATIONS BLOCK */}
-                    <div className="bg-orange-50/30 border border-orange-100 rounded-xl p-4.5 space-y-3.5">
-                      <h5 className="text-xs font-black text-orange-950 uppercase tracking-wide">🚀 Recommandations Stratégiques Prévisionnelles</h5>
-                      <ul className="text-[11px] text-orange-900 space-y-2 leading-relaxed">
-                        <li className="flex gap-2">
-                          <span className="font-black text-orange-650">•</span>
-                          <span><strong>Booster la Livraison & Emballages</strong>: Les ventes en ligne représentent un excellent levier pour gonfler le chiffre d'affaires hebdomadaire sans saturer l'espace de la salle (Tables 1 à 20).</span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="font-black text-orange-650">•</span>
-                          <span><strong>Réduire la démarque sur les approvisionnements</strong>: En limitant les déchets de provisions de marché (période de conservation maximale), vous pouvez augmenter votre marge sur coût d'achat par plat.</span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="font-black text-orange-650">•</span>
-                          <span><strong>Alerte de trésorerie sur dépenses exceptionnelles</strong>: Repousser les dépenses optionnelles (charges variables comme de grandes réparations decoratives) au-delà des périodes de faible affluence de la semaine.</span>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-
-                {/* HISTORICAL GRAPH CHART CARD */}
-                <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                    <h4 className="text-sm font-black text-gray-800 text-left uppercase tracking-tight">📈 Historique Mensuel de Performance (Janvier - Mai 2026)</h4>
-                    <span className="text-[10px] text-gray-400 font-sans uppercase font-semibold">Chiffres d'Affaires vs Charges vs Seuil de Rentabilité</span>
-                  </div>
-
-                  <div className="h-[320px] pt-4 font-sans text-xs">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart
-                        data={analyseChartData}
-                        margin={{ top: 10, right: 30, left: 15, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#ea580c" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#ea580c" stopOpacity={0.01}/>
-                          </linearGradient>
-                          <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#475569" stopOpacity={0.15}/>
-                            <stop offset="95%" stopColor="#475569" stopOpacity={0.01}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="month" stroke="#64748b" fontSize={11} fontWeight="bold" />
-                        <YAxis stroke="#64748b" fontSize={11} tickFormatter={(val) => `${val / 1000}k FCFA`} />
-                        <Tooltip 
-                          formatter={(value: any) => [formatFCFA(value), '']} 
-                          contentStyle={{ background: '#0f172a', borderRadius: '12-px', color: '#fff', border: 'none', fontStyle: 'sans', fontSize: '11px' }}
-                        />
-                        <Legend wrapperStyle={{ paddingTop: '15px' }} />
-                        <Area type="monotone" name="Chiffre d'Affaires (FCFA)" dataKey="sales" stroke="#ea580c" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
-                        <Area type="monotone" name="Dépenses d'Exploitation (FCFA)" dataKey="expenses" stroke="#475569" strokeWidth={2} fillOpacity={1} fill="url(#colorExp)" />
-                        <Bar type="monotone" name="Bénéfice Net (FCFA)" dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                        <Line type="monotone" name="Objectif pour Profit 150K" dataKey="target" stroke="#ec4899" strokeWidth={2} strokeDasharray="5 5" dot={true} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="bg-slate-50 rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 text-xs font-sans text-slate-500 leading-normal">
-                    <span className="text-left font-semibold">
-                      💡 <strong>Note d'interprétation</strong> : La ligne pointillée rose représente le Chiffre d'Affaires minimal à encaisser pour régler vos charges et prélever précisément 150 000 FCFA de bénéfice de votre activité.
-                    </span>
-                    <span className="text-[10px] font-bold font-mono py-1 px-3 bg-white border border-slate-150 rounded-lg text-slate-800 uppercase shadow-xs shrink-0 select-none">
-                      Yikéli Restaurant Engine v1.0
-                    </span>
-                  </div>
-                </div>
-
-              </div>
-            );
-          })()}
-        </motion.div>
-      )}
-
       {activeTab === 'fournisseurs' && (
         <motion.div
           key="fournisseurs-tab"
@@ -7094,6 +6812,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
           }}
         />
       )}
+      </main>
     </div>
   );
 }
