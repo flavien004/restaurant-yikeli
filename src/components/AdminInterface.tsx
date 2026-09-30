@@ -47,6 +47,7 @@ import {
   AlertCircle,
   Settings,
   Database,
+  RefreshCw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -130,6 +131,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
     managerEmail: currentRest?.managerEmail || '',
     contacts: currentRest?.contacts || '',
     whatsapp: currentRest?.whatsapp || '',
+    accessCode: currentRest?.accessCode || '',
     subscriptionPlan: currentRest?.subscriptionPlan || 'PREMIUM_ANNUEL',
     subscriptionStartDate: currentRest?.subscriptionStartDate || '2026-01-01',
     subscriptionEndDate: currentRest?.subscriptionEndDate || '2026-12-31',
@@ -145,6 +147,8 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
   });
 
   const [settingsSaveSuccess, setSettingsSaveSuccess] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (db.activeRestaurant) {
@@ -158,6 +162,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
         managerEmail: db.activeRestaurant.managerEmail,
         contacts: db.activeRestaurant.contacts,
         whatsapp: db.activeRestaurant.whatsapp,
+        accessCode: db.activeRestaurant.accessCode || '',
         subscriptionPlan: db.activeRestaurant.subscriptionPlan,
         subscriptionStartDate: db.activeRestaurant.subscriptionStartDate,
         subscriptionEndDate: db.activeRestaurant.subscriptionEndDate,
@@ -173,14 +178,23 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
     }
   }, [db.saasPricing]);
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (db.activeRestaurant) {
-      db.updateRestaurant(db.activeRestaurant.id, restForm);
+    setIsSavingSettings(true);
+    setSettingsError(null);
+    try {
+      if (db.activeRestaurant) {
+        await db.updateRestaurant(db.activeRestaurant.id, restForm);
+      }
+      db.updateSaaSPricing(pricingForm);
+      setSettingsSaveSuccess(true);
+      setTimeout(() => setSettingsSaveSuccess(false), 4000);
+    } catch (err: any) {
+      console.warn("Erreur sauvegarde restaurant:", err);
+      setSettingsError(err?.message || "Erreur lors de la synchronisation distante");
+    } finally {
+      setIsSavingSettings(false);
     }
-    db.updateSaaSPricing(pricingForm);
-    setSettingsSaveSuccess(true);
-    setTimeout(() => setSettingsSaveSuccess(false), 4000);
   };
 
   const [showPlatModal, setShowPlatModal] = useState(false);
@@ -5225,7 +5239,14 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
               {settingsSaveSuccess && (
                 <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 animate-fadeIn">
                   <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                  Modifications enregistrées avec succès !
+                  Modifications enregistrées et synchronisées avec succès !
+                </div>
+              )}
+
+              {settingsError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 animate-fadeIn">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  {settingsError}
                 </div>
               )}
             </div>
@@ -5365,6 +5386,63 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
+
+                  {/* Rubrique Code Confidentiel du Restaurant */}
+                  <div className="md:col-span-3 bg-gradient-to-r from-orange-50/70 to-amber-50/50 border border-orange-200/90 rounded-2xl p-4.5 space-y-3 shadow-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Key className="w-4 h-4 text-orange-600 shrink-0" />
+                          <label className="text-xs font-black text-slate-900 uppercase tracking-wide">
+                            Code Confidentiel du Restaurant (Accès Équipe &amp; Caisse) *
+                          </label>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                          Ce code confidentiel unique est transmis à vos caissiers, serveurs et personnel pour déverrouiller l'accès de l'équipe à votre établissement sur tous les terminaux.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const prefix = (restForm.name.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'RES').toUpperCase();
+                            const newCode = `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+                            setRestForm({ ...restForm, accessCode: newCode });
+                          }}
+                          className="px-3 py-1.5 bg-white hover:bg-orange-100 text-orange-700 font-bold text-xs rounded-xl border border-orange-200 transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow-xs"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 text-orange-500" />
+                          <span>Générer un code</span>
+                        </button>
+
+                        {restForm.accessCode && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(restForm.accessCode);
+                              alert('Code confidentiel copié : ' + restForm.accessCode);
+                            }}
+                            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow-xs"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copier</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="max-w-xs">
+                      <input
+                        type="text"
+                        required
+                        value={restForm.accessCode}
+                        placeholder="Ex: YIK-7749"
+                        onChange={(e) => setRestForm({ ...restForm, accessCode: e.target.value.toUpperCase().trim() })}
+                        className="w-full bg-white border-2 border-orange-400 rounded-xl px-4 py-2 text-slate-900 font-mono font-black text-sm tracking-wider focus:ring-2 focus:ring-orange-500 focus:outline-none uppercase shadow-inner"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -5431,10 +5509,20 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
               <div className="pt-6 border-t border-gray-150 flex items-center justify-end gap-3">
                 <button
                   type="submit"
-                  className="bg-orange-500 hover:bg-orange-600 active:scale-[0.98] text-white font-bold text-sm py-3 px-8 rounded-xl shadow-md transition cursor-pointer flex items-center gap-2"
+                  disabled={isSavingSettings}
+                  className="bg-orange-500 hover:bg-orange-600 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-sm py-3 px-8 rounded-xl shadow-md transition cursor-pointer flex items-center gap-2"
                 >
-                  <CheckCircle className="w-4 h-4" />
-                  Enregistrer les Modifications
+                  {isSavingSettings ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Enregistrement &amp; Synchronisation...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Enregistrer les Modifications</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
