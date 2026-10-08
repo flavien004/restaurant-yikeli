@@ -189,9 +189,7 @@ export function getSupabaseClient(): SupabaseClient | null {
         },
         fetch: (input, init) => {
           const headers = new Headers(init?.headers);
-          if (!headers.has('x-restaurant-id') && currentTenantId) {
-            headers.set('x-restaurant-id', currentTenantId);
-          }
+          headers.set('x-restaurant-id', currentTenantId || 'rest-1');
           return fetch(input, { ...init, headers });
         },
       },
@@ -400,7 +398,6 @@ CREATE TABLE IF NOT EXISTS public.yikeli_restaurants (
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS access_code TEXT;
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS admin_username TEXT;
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS admin_password_hash TEXT;
-ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS admin_password TEXT;
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS manager_name TEXT;
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS manager_phone TEXT;
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS manager_email TEXT;
@@ -416,11 +413,6 @@ ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS status TEXT DEFAU
 ALTER TABLE public.yikeli_restaurants ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_yikeli_restaurants_access_code ON public.yikeli_restaurants (access_code);
-
--- Remplissage des codes confidentiels par défaut pour les restaurants existants sans code
-UPDATE public.yikeli_restaurants
-SET access_code = UPPER(SUBSTRING(REGEXP_REPLACE(name, '[^a-zA-Z]', '', 'g') FROM 1 FOR 3)) || '-' || LPAD(FLOOR(RANDOM() * 9000 + 1000)::TEXT, 4, '0')
-WHERE access_code IS NULL OR TRIM(access_code) = '';
 
 -- Insertion de l'établissement par défaut s'il n'existe pas encore
 INSERT INTO public.yikeli_restaurants (id, name, status, created_at)
@@ -618,11 +610,8 @@ CREATE TABLE IF NOT EXISTS public.yikeli_settings (
   payment_methods JSONB NOT NULL DEFAULT '[]'::jsonb,
   depense_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
   saas_pricing JSONB NOT NULL DEFAULT '{}'::jsonb,
-  restaurant_profile JSONB DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-ALTER TABLE public.yikeli_settings ADD COLUMN IF NOT EXISTS restaurant_profile JSONB DEFAULT '{}'::jsonb;
 
 -- -----------------------------------------------------------------------------
 -- 13. TRIGGERS AUTOMATIQUES (HASH BCRYPT & UPDATED_AT)
@@ -726,74 +715,141 @@ CREATE POLICY "Restaurants Tenant Manage" ON public.yikeli_restaurants
 -- POLITIQUES PLATS
 DROP POLICY IF EXISTS "Plats Public Read Active" ON public.yikeli_plats;
 CREATE POLICY "Plats Public Read Active" ON public.yikeli_plats
-  FOR SELECT USING (true);
+  FOR SELECT USING (
+    is_available = true 
+    AND (restaurant_id = public.current_restaurant_id() OR public.current_restaurant_id() IS NULL)
+  );
 
 DROP POLICY IF EXISTS "Plats Tenant Manage" ON public.yikeli_plats;
 CREATE POLICY "Plats Tenant Manage" ON public.yikeli_plats
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id()
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id()
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES COMMANDES
 DROP POLICY IF EXISTS "Orders Customer Insert" ON public.yikeli_orders;
 CREATE POLICY "Orders Customer Insert" ON public.yikeli_orders
-  FOR INSERT WITH CHECK (true);
+  FOR INSERT WITH CHECK (
+    restaurant_id = COALESCE(public.current_restaurant_id(), restaurant_id)
+  );
 
 DROP POLICY IF EXISTS "Orders Tenant Manage" ON public.yikeli_orders;
 CREATE POLICY "Orders Tenant Manage" ON public.yikeli_orders
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES LIGNES DE COMMANDES (ITEMS)
 DROP POLICY IF EXISTS "Order Items Customer Insert" ON public.yikeli_order_items;
 CREATE POLICY "Order Items Customer Insert" ON public.yikeli_order_items
-  FOR INSERT WITH CHECK (true);
+  FOR INSERT WITH CHECK (
+    restaurant_id = COALESCE(public.current_restaurant_id(), restaurant_id)
+  );
 
 DROP POLICY IF EXISTS "Order Items Tenant Manage" ON public.yikeli_order_items;
 CREATE POLICY "Order Items Tenant Manage" ON public.yikeli_order_items
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
--- POLITIQUES PAIEMENTS
+-- POLITIQUES PAIEMENTS (Strictement isolé par restaurant)
 DROP POLICY IF EXISTS "Paiements Tenant Access" ON public.yikeli_paiements;
 CREATE POLICY "Paiements Tenant Access" ON public.yikeli_paiements
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
--- POLITIQUES DÉPENSES
+-- POLITIQUES DÉPENSES (Strictement isolé par restaurant)
 DROP POLICY IF EXISTS "Depenses Tenant Access" ON public.yikeli_depenses;
 CREATE POLICY "Depenses Tenant Access" ON public.yikeli_depenses
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES CLIENTS
 DROP POLICY IF EXISTS "Clients Tenant Access" ON public.yikeli_clients;
 CREATE POLICY "Clients Tenant Access" ON public.yikeli_clients
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES FOURNISSEURS
 DROP POLICY IF EXISTS "Suppliers Tenant Access" ON public.yikeli_suppliers;
 CREATE POLICY "Suppliers Tenant Access" ON public.yikeli_suppliers
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES STOCKS
 DROP POLICY IF EXISTS "Stock Tenant Access" ON public.yikeli_stock_entries;
 CREATE POLICY "Stock Tenant Access" ON public.yikeli_stock_entries
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES UTILISATEURS / EMPLOYÉS
 DROP POLICY IF EXISTS "Users Tenant Access" ON public.yikeli_users;
 CREATE POLICY "Users Tenant Access" ON public.yikeli_users
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- POLITIQUES PARAMÈTRES & CONFIGURATION
 DROP POLICY IF EXISTS "Settings Tenant Access" ON public.yikeli_settings;
 CREATE POLICY "Settings Tenant Access" ON public.yikeli_settings
-  FOR ALL USING (true)
-  WITH CHECK (true);
+  FOR ALL USING (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  )
+  WITH CHECK (
+    restaurant_id = public.current_restaurant_id() 
+    OR public.current_restaurant_id() IS NULL
+  );
 
 -- -----------------------------------------------------------------------------
 -- 17. ACTIVATION DE LA RÉPLICATION TEMPS RÉEL (SUPABASE REALTIME)
@@ -938,8 +994,6 @@ export async function syncPlatToSupabase(plat: Plat, restaurantId = 'rest-1'): P
   const client = getSupabaseClient();
   if (!client) return false;
 
-  setActiveRestaurantTenant(restaurantId);
-
   try {
     const payload = {
       id: plat.id,
@@ -961,13 +1015,7 @@ export async function syncPlatToSupabase(plat: Plat, restaurantId = 'rest-1'): P
       .upsert(payload, { onConflict: 'id' });
 
     if (error) {
-      console.warn('syncPlatToSupabase yikeli_plats:', error.message);
-      // Fallback miroir dans yikeli_settings pour sécuriser la persistance
-      try {
-        await syncSettingsToSupabase({ plats: [plat] }, restaurantId);
-      } catch {
-        // Ignorer
-      }
+      console.warn('Erreur syncPlatToSupabase yikeli_plats:', error.message);
       return false;
     }
 
@@ -1442,8 +1490,6 @@ export async function syncRestaurantToSupabase(rest: RestaurantTenant): Promise<
     return false;
   }
 
-  setActiveRestaurantTenant(rest.id);
-
   const cleanAccessCode = (rest.accessCode || '').trim() || `${(rest.name || 'RES').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase()}-${(rest.id || '1000').slice(-4)}`;
 
   try {
@@ -1464,64 +1510,27 @@ export async function syncRestaurantToSupabase(rest: RestaurantTenant): Promise<
       status: rest.status || 'ACTIF',
       admin_username: rest.adminUsername || null,
       admin_password_hash: rest.adminPassword || null,
-      admin_password: rest.adminPassword || null,
       access_code: cleanAccessCode,
       created_at: rest.createdAt ? new Date(rest.createdAt).toISOString() : new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Tentative d'upsert direct complet
-    let { error } = await client.from('yikeli_restaurants').upsert(payload, { onConflict: 'id' });
+    const { error } = await client.from('yikeli_restaurants').upsert(payload, { onConflict: 'id' });
 
-    // 2. Repli adaptatif si certaines colonnes manquent dans la base distante
     if (error) {
-      console.warn('Erreur upsert yikeli_restaurants (tentative 1):', error.message);
-      const safePayload = { ...payload };
+      console.warn('Erreur upsert yikeli_restaurants:', error.message, error.details);
 
-      if (error.message && (error.message.includes('admin_password_hash') || error.message.includes('crypt') || error.message.includes('gen_salt'))) {
-        delete safePayload.admin_password_hash;
-      }
-      if (error.message && error.message.includes('admin_password') && !error.message.includes('admin_password_hash')) {
-        delete safePayload.admin_password;
-      }
-      if (error.message && error.message.includes('access_code')) {
-        delete safePayload.access_code;
-      }
-
-      const retryRes = await client.from('yikeli_restaurants').upsert(safePayload, { onConflict: 'id' });
-      if (retryRes.error) {
-        console.warn('Erreur retry yikeli_restaurants (tentative 2):', retryRes.error.message);
-        // Minimal safe payload
-        const minPayload: any = {
-          id: rest.id,
-          name: rest.name,
-          logo: rest.logo || null,
-          slogan: rest.slogan || null,
-          address: rest.address || null,
-          contacts: rest.contacts || null,
-          status: rest.status || 'ACTIF',
-          updated_at: new Date().toISOString(),
-        };
-        if (!retryRes.error.message.includes('access_code')) {
-          minPayload.access_code = cleanAccessCode;
+      // Si la table distante existante ne possède pas encore la colonne access_code ou admin_password_hash
+      if (error.message && (error.message.includes('access_code') || error.message.includes('admin_password_hash') || error.message.includes('schema cache'))) {
+        const { access_code, admin_password_hash, ...safePayload } = payload;
+        const { error: retryError } = await client.from('yikeli_restaurants').upsert(safePayload, { onConflict: 'id' });
+        if (retryError) {
+          console.warn('Erreur retry syncRestaurantToSupabase:', retryError.message);
+          return false;
         }
-        await client.from('yikeli_restaurants').upsert(minPayload, { onConflict: 'id' });
+        return true;
       }
-    }
-
-    // 3. Sauvegarde miroir dans yikeli_settings pour sécuriser la persistance de l'ensemble des rubriques
-    try {
-      await client.from('yikeli_settings').upsert({
-        id: `settings-${rest.id}`,
-        restaurant_id: rest.id,
-        restaurant_profile: {
-          ...rest,
-          accessCode: cleanAccessCode,
-        },
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' });
-    } catch {
-      // Ignorer
+      return false;
     }
 
     return true;
@@ -1542,44 +1551,26 @@ export async function fetchAllRestaurantsFromSupabase(): Promise<RestaurantTenan
     const { data, error } = await client.from('yikeli_restaurants').select('*');
     if (error || !Array.isArray(data)) return null;
 
-    // Récupérer aussi les profils miroir depuis yikeli_settings si présents
-    let settingsMap: Record<string, any> = {};
-    try {
-      const { data: sData } = await client.from('yikeli_settings').select('restaurant_id, restaurant_profile');
-      if (Array.isArray(sData)) {
-        sData.forEach((s) => {
-          if (s.restaurant_id && s.restaurant_profile) {
-            settingsMap[s.restaurant_id] = s.restaurant_profile;
-          }
-        });
-      }
-    } catch {
-      // Ignorer
-    }
-
-    return data.map((d) => {
-      const mirror = settingsMap[d.id] || {};
-      return {
-        id: d.id,
-        name: d.name || mirror.name || '',
-        logo: d.logo || mirror.logo || '',
-        slogan: d.slogan || mirror.slogan || '',
-        address: d.address || mirror.address || '',
-        managerName: d.manager_name || mirror.managerName || '',
-        managerPhone: d.manager_phone || mirror.managerPhone || '',
-        managerEmail: d.manager_email || mirror.managerEmail || '',
-        contacts: d.contacts || mirror.contacts || '',
-        whatsapp: d.whatsapp || mirror.whatsapp || '',
-        subscriptionPlan: d.subscription_plan || mirror.subscriptionPlan || 'PREMIUM_ANNUEL',
-        subscriptionStartDate: d.subscription_start_date || mirror.subscriptionStartDate || '',
-        subscriptionEndDate: d.subscription_end_date || mirror.subscriptionEndDate || '',
-        status: d.status || mirror.status || 'ACTIF',
-        adminUsername: d.admin_username || mirror.adminUsername || '',
-        adminPassword: d.admin_password_hash || d.admin_password || mirror.adminPassword || '',
-        accessCode: d.access_code || mirror.accessCode || `${(d.name || 'RES').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase()}-${(d.id || '1000').slice(-4)}`,
-        createdAt: d.created_at || mirror.createdAt || new Date().toISOString(),
-      };
-    });
+    return data.map((d) => ({
+      id: d.id,
+      name: d.name,
+      logo: d.logo || '',
+      slogan: d.slogan || '',
+      address: d.address || '',
+      managerName: d.manager_name || '',
+      managerPhone: d.manager_phone || '',
+      managerEmail: d.manager_email || '',
+      contacts: d.contacts || '',
+      whatsapp: d.whatsapp || '',
+      subscriptionPlan: d.subscription_plan || 'PREMIUM_ANNUEL',
+      subscriptionStartDate: d.subscription_start_date || '',
+      subscriptionEndDate: d.subscription_end_date || '',
+      status: d.status || 'ACTIF',
+      adminUsername: d.admin_username || '',
+      adminPassword: d.admin_password_hash || d.admin_password || '',
+      accessCode: d.access_code || d.accessCode || `${(d.name || 'RES').replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase()}-${(d.id || '1000').slice(-4)}`,
+      createdAt: d.created_at || new Date().toISOString(),
+    }));
   } catch {
     return null;
   }
