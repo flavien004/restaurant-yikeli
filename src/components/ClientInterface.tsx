@@ -44,10 +44,22 @@ async function sendOrder(order: Commande) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(order),
     });
-    const result = await response.json();
-    console.log("Result from Netlify saveOrder function:", result);
+    if (!response.ok) return;
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      const text = await response.text();
+      if (text && text.trim().length > 0) {
+        try {
+          const result = JSON.parse(text);
+          console.log("Result from Netlify saveOrder function:", result);
+        } catch {
+          // Ignore invalid JSON responses gracefully
+        }
+      }
+    }
   } catch (error) {
-    console.error("Error submitting order to Netlify function:", error);
+    // Log as gentle warning instead of console.error: order is already saved to local DB and Supabase
+    console.warn("Netlify function endpoint not reachable, order safely stored locally and in Supabase:", error);
   }
 }
 

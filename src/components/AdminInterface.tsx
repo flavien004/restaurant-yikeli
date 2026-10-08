@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useYikeliDb } from '../db';
 import { Plat, User, Client, Commande, Paiement, Depense, DepenseCategory, PlatCategory, getExpenseTypeForCategory } from '../types';
 import Logo from './Logo';
@@ -149,28 +149,33 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
   const [settingsSaveSuccess, setSettingsSaveSuccess] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const currentLoadedRestIdRef = useRef<string | null>(null);
+  const [isRestFormDirty, setIsRestFormDirty] = useState(false);
 
   useEffect(() => {
     if (db.activeRestaurant) {
-      setRestForm({
-        name: db.activeRestaurant.name,
-        logo: db.activeRestaurant.logo,
-        slogan: db.activeRestaurant.slogan,
-        address: db.activeRestaurant.address,
-        managerName: db.activeRestaurant.managerName,
-        managerPhone: db.activeRestaurant.managerPhone,
-        managerEmail: db.activeRestaurant.managerEmail,
-        contacts: db.activeRestaurant.contacts,
-        whatsapp: db.activeRestaurant.whatsapp,
-        accessCode: db.activeRestaurant.accessCode || '',
-        subscriptionPlan: db.activeRestaurant.subscriptionPlan,
-        subscriptionStartDate: db.activeRestaurant.subscriptionStartDate,
-        subscriptionEndDate: db.activeRestaurant.subscriptionEndDate,
-        adminUsername: db.activeRestaurant.adminUsername,
-        adminPassword: db.activeRestaurant.adminPassword,
-      });
+      if (currentLoadedRestIdRef.current !== db.activeRestaurant.id || !isRestFormDirty) {
+        currentLoadedRestIdRef.current = db.activeRestaurant.id;
+        setRestForm({
+          name: db.activeRestaurant.name,
+          logo: db.activeRestaurant.logo,
+          slogan: db.activeRestaurant.slogan,
+          address: db.activeRestaurant.address,
+          managerName: db.activeRestaurant.managerName,
+          managerPhone: db.activeRestaurant.managerPhone,
+          managerEmail: db.activeRestaurant.managerEmail,
+          contacts: db.activeRestaurant.contacts,
+          whatsapp: db.activeRestaurant.whatsapp,
+          accessCode: db.activeRestaurant.accessCode || '',
+          subscriptionPlan: db.activeRestaurant.subscriptionPlan,
+          subscriptionStartDate: db.activeRestaurant.subscriptionStartDate,
+          subscriptionEndDate: db.activeRestaurant.subscriptionEndDate,
+          adminUsername: db.activeRestaurant.adminUsername,
+          adminPassword: db.activeRestaurant.adminPassword,
+        });
+      }
     }
-  }, [db.activeRestaurant]);
+  }, [db.activeRestaurant, isRestFormDirty]);
 
   useEffect(() => {
     if (db.saasPricing) {
@@ -178,15 +183,24 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
     }
   }, [db.saasPricing]);
 
+  const updateRestForm = (patch: Partial<typeof restForm>) => {
+    setIsRestFormDirty(true);
+    setRestForm((prev) => ({ ...prev, ...patch }));
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingSettings(true);
     setSettingsError(null);
     try {
       if (db.activeRestaurant) {
-        await db.updateRestaurant(db.activeRestaurant.id, restForm);
+        const ok = await db.updateRestaurant(db.activeRestaurant.id, restForm);
+        if (!ok) {
+          console.warn("Mise à jour distante en file d'attente hors-ligne");
+        }
       }
       db.updateSaaSPricing(pricingForm);
+      setIsRestFormDirty(false);
       setSettingsSaveSuccess(true);
       setTimeout(() => setSettingsSaveSuccess(false), 4000);
     } catch (err: any) {
@@ -5266,7 +5280,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="text"
                       required
                       value={restForm.name}
-                      onChange={(e) => setRestForm({ ...restForm, name: e.target.value })}
+                      onChange={(e) => updateRestForm({ name: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5276,7 +5290,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                     <input
                       type="text"
                       value={restForm.slogan}
-                      onChange={(e) => setRestForm({ ...restForm, slogan: e.target.value })}
+                      onChange={(e) => updateRestForm({ slogan: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5286,7 +5300,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                     <input
                       type="text"
                       value={restForm.logo}
-                      onChange={(e) => setRestForm({ ...restForm, logo: e.target.value })}
+                      onChange={(e) => updateRestForm({ logo: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5297,7 +5311,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="text"
                       required
                       value={restForm.address}
-                      onChange={(e) => setRestForm({ ...restForm, address: e.target.value })}
+                      onChange={(e) => updateRestForm({ address: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5307,7 +5321,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                     <input
                       type="text"
                       value={restForm.contacts}
-                      onChange={(e) => setRestForm({ ...restForm, contacts: e.target.value })}
+                      onChange={(e) => updateRestForm({ contacts: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5317,7 +5331,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                     <input
                       type="text"
                       value={restForm.whatsapp}
-                      onChange={(e) => setRestForm({ ...restForm, whatsapp: e.target.value })}
+                      onChange={(e) => updateRestForm({ whatsapp: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5338,7 +5352,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="text"
                       required
                       value={restForm.managerName}
-                      onChange={(e) => setRestForm({ ...restForm, managerName: e.target.value })}
+                      onChange={(e) => updateRestForm({ managerName: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5349,7 +5363,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="text"
                       required
                       value={restForm.managerPhone}
-                      onChange={(e) => setRestForm({ ...restForm, managerPhone: e.target.value })}
+                      onChange={(e) => updateRestForm({ managerPhone: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5360,7 +5374,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="email"
                       required
                       value={restForm.managerEmail}
-                      onChange={(e) => setRestForm({ ...restForm, managerEmail: e.target.value })}
+                      onChange={(e) => updateRestForm({ managerEmail: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5371,7 +5385,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="text"
                       required
                       value={restForm.adminUsername}
-                      onChange={(e) => setRestForm({ ...restForm, adminUsername: e.target.value })}
+                      onChange={(e) => updateRestForm({ adminUsername: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5382,7 +5396,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                       type="text"
                       required
                       value={restForm.adminPassword}
-                      onChange={(e) => setRestForm({ ...restForm, adminPassword: e.target.value })}
+                      onChange={(e) => updateRestForm({ adminPassword: e.target.value })}
                       className="w-full bg-slate-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-slate-800 font-medium focus:ring-2 focus:ring-orange-500 focus:outline-none"
                     />
                   </div>
@@ -5408,7 +5422,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                           onClick={() => {
                             const prefix = (restForm.name.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'RES').toUpperCase();
                             const newCode = `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
-                            setRestForm({ ...restForm, accessCode: newCode });
+                            updateRestForm({ accessCode: newCode });
                           }}
                           className="px-3 py-1.5 bg-white hover:bg-orange-100 text-orange-700 font-bold text-xs rounded-xl border border-orange-200 transition flex items-center gap-1.5 active:scale-95 cursor-pointer shadow-xs"
                         >
@@ -5438,7 +5452,7 @@ export default function AdminInterface({ db, activeAdmin, onLogout, onOpenSupaba
                         required
                         value={restForm.accessCode}
                         placeholder="Ex: YIK-7749"
-                        onChange={(e) => setRestForm({ ...restForm, accessCode: e.target.value.toUpperCase().trim() })}
+                        onChange={(e) => updateRestForm({ accessCode: e.target.value.toUpperCase().trim() })}
                         className="w-full bg-white border-2 border-orange-400 rounded-xl px-4 py-2 text-slate-900 font-mono font-black text-sm tracking-wider focus:ring-2 focus:ring-orange-500 focus:outline-none uppercase shadow-inner"
                       />
                     </div>

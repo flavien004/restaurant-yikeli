@@ -19,6 +19,7 @@ import {
   fetchAllSuppliersFromSupabase,
   syncRestaurantToSupabase,
   fetchAllRestaurantsFromSupabase,
+  setActiveRestaurantTenant,
   syncUserToSupabase,
   fetchAllUsersFromSupabase,
   syncPlatToSupabase,
@@ -166,7 +167,11 @@ export function useYikeliDb() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [restaurants, setRestaurants] = useState<RestaurantTenant[]>([]);
   const [saasPricing, setSaasPricing] = useState<SaaSPricingConfig>(INITIAL_SAAS_PRICING);
-  const [activeRestaurantId, setActiveRestaurantIdState] = useState<string>('rest-1');
+  const [activeRestaurantId, setActiveRestaurantIdState] = useState<string>(() => {
+    const saved = (typeof window !== 'undefined' ? localStorage.getItem('yikeli_active_restaurant_id') : null) || 'rest-1';
+    setActiveRestaurantTenant(saved);
+    return saved;
+  });
   const [isSyncing, setIsSyncing] = useState(false);
   const [supabaseStatus, setSupabaseStatus] = useState<'CONNECTED' | 'CONNECTING' | 'DISCONNECTED' | 'NOT_CONFIGURED' | 'ERROR'>('CONNECTING');
   const [supabaseRealtimeActive, setSupabaseRealtimeActive] = useState(false);
@@ -2440,9 +2445,29 @@ export function useYikeliDb() {
               if (idx === -1) {
                 nextR.push(rr);
                 rUpdated = true;
-              } else if (JSON.stringify(nextR[idx]) !== JSON.stringify(rr)) {
-                nextR[idx] = { ...nextR[idx], ...rr };
-                rUpdated = true;
+              } else {
+                const current = nextR[idx];
+                const merged: RestaurantTenant = {
+                  ...current,
+                  ...rr,
+                  // Préserver les personnalisations locales si le serveur renvoie du vide ou un repli par défaut
+                  name: rr.name || current.name,
+                  accessCode: (rr.accessCode && !rr.accessCode.startsWith('RES-')) ? rr.accessCode : (current.accessCode || rr.accessCode),
+                  logo: rr.logo || current.logo,
+                  slogan: rr.slogan || current.slogan,
+                  address: rr.address || current.address,
+                  managerName: rr.managerName || current.managerName,
+                  managerPhone: rr.managerPhone || current.managerPhone,
+                  managerEmail: rr.managerEmail || current.managerEmail,
+                  contacts: rr.contacts || current.contacts,
+                  whatsapp: rr.whatsapp || current.whatsapp,
+                  adminUsername: rr.adminUsername || current.adminUsername,
+                  adminPassword: rr.adminPassword || current.adminPassword,
+                };
+                if (JSON.stringify(current) !== JSON.stringify(merged)) {
+                  nextR[idx] = merged;
+                  rUpdated = true;
+                }
               }
             });
             if (rUpdated) {
@@ -2467,27 +2492,30 @@ export function useYikeliDb() {
       const response = await fetch('/.netlify/functions/getOrders');
       const contentType = response.headers.get('content-type');
       if (response.ok && contentType && contentType.includes('application/json')) {
-        const remoteOrders = await response.json();
-        if (Array.isArray(remoteOrders) && remoteOrders.length > 0) {
-          setCommandes((prev) => {
-            let updated = false;
-            const next = [...prev];
-            remoteOrders.forEach((remote: Commande) => {
-              const index = next.findIndex((c) => c.id === remote.id);
-              if (index === -1) {
-                next.push(remote);
-                updated = true;
-              } else if (JSON.stringify(next[index]) !== JSON.stringify(remote)) {
-                next[index] = remote;
-                updated = true;
+        const text = await response.text();
+        if (text && text.trim().length > 0) {
+          const remoteOrders = JSON.parse(text);
+          if (Array.isArray(remoteOrders) && remoteOrders.length > 0) {
+            setCommandes((prev) => {
+              let updated = false;
+              const next = [...prev];
+              remoteOrders.forEach((remote: Commande) => {
+                const index = next.findIndex((c) => c.id === remote.id);
+                if (index === -1) {
+                  next.push(remote);
+                  updated = true;
+                } else if (JSON.stringify(next[index]) !== JSON.stringify(remote)) {
+                  next[index] = remote;
+                  updated = true;
+                }
+              });
+              if (updated) {
+                localStorage.setItem('yikeli_commandes', JSON.stringify(next));
+                return next;
               }
+              return prev;
             });
-            if (updated) {
-              localStorage.setItem('yikeli_commandes', JSON.stringify(next));
-              return next;
-            }
-            return prev;
-          });
+          }
         }
       }
     } catch (err) {
@@ -2498,22 +2526,25 @@ export function useYikeliDb() {
       const menuResponse = await fetch('/.netlify/functions/getMenu');
       const menuContentType = menuResponse.headers.get('content-type');
       if (menuResponse.ok && menuContentType && menuContentType.includes('application/json')) {
-        const menuData = await menuResponse.json();
-        if (menuData && menuData.plats && menuData.menuJour) {
-          setPlats((localPlats) => {
-            if (JSON.stringify(localPlats) !== JSON.stringify(menuData.plats)) {
-              localStorage.setItem('yikeli_plats', JSON.stringify(menuData.plats));
-              return menuData.plats;
-            }
-            return localPlats;
-          });
-          setMenuJour((localMenu) => {
-            if (JSON.stringify(localMenu) !== JSON.stringify(menuData.menuJour)) {
-              localStorage.setItem('yikeli_menujour', JSON.stringify(menuData.menuJour));
-              return menuData.menuJour;
-            }
-            return localMenu;
-          });
+        const menuText = await menuResponse.text();
+        if (menuText && menuText.trim().length > 0) {
+          const menuData = JSON.parse(menuText);
+          if (menuData && menuData.plats && menuData.menuJour) {
+            setPlats((localPlats) => {
+              if (JSON.stringify(localPlats) !== JSON.stringify(menuData.plats)) {
+                localStorage.setItem('yikeli_plats', JSON.stringify(menuData.plats));
+                return menuData.plats;
+              }
+              return localPlats;
+            });
+            setMenuJour((localMenu) => {
+              if (JSON.stringify(localMenu) !== JSON.stringify(menuData.menuJour)) {
+                localStorage.setItem('yikeli_menujour', JSON.stringify(menuData.menuJour));
+                return menuData.menuJour;
+              }
+              return localMenu;
+            });
+          }
         }
       }
     } catch (menuErr) {
@@ -2865,6 +2896,7 @@ export function useYikeliDb() {
   const setActiveRestaurantId = (id: string) => {
     localStorage.setItem('yikeli_active_restaurant_id', id);
     setActiveRestaurantIdState(id);
+    setActiveRestaurantTenant(id);
   };
 
   const activeRestaurant = useMemo(() => {
